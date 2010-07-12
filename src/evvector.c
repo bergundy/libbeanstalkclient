@@ -31,6 +31,12 @@ evvector *evvector_new(size_t init_size, size_t realloc_size)
     return vec;
 }
 
+void      evvector_free(evvector *vec)
+{
+    free(vec->data);
+    free(vec);
+}
+
 bool      evvector_expand(evvector *vec)
 {
     char *realloc_data = NULL;

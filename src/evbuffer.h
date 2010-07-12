@@ -11,9 +11,9 @@
 
 #include <stdbool.h>
 
-#define BUFFER_FULL(buf) ( (buf)->writep->data != NULL )
-#define BUFFER_EMPTY(buf) ( (buf)->readp->data == NULL || (buf)->readp->read )
-#define BUFFER_HASCB(buf) ( (buf)->cbp->data == NULL )
+#define EVBUFFER_FULL(buf) ( (buf)->writep->data != NULL )
+#define EVBUFFER_EMPTY(buf) ( (buf)->readp->data == NULL || (buf)->readp->read )
+#define EVBUFFER_HASCB(buf) ( (buf)->cbp->data == NULL )
 
 struct _evbuffer_node {
     size_t length;

@@ -13,9 +13,6 @@
 #include <string.h>
 #include "evvector.h"
 
-
-#define BUFS 40
-
 evvector *vec;
 
 START_TEST(test_evvector) {
@@ -32,6 +29,7 @@ START_TEST(test_evvector) {
     *vec->eom   = '\0';
     fail_if( EVVECTOR_FREE(vec), "EVVECTOR_FREE");
     fail_if( strcmp(vec->som, "abc") != 0, "got bad data");
+    evvector_free(vec);
 }
 END_TEST
 

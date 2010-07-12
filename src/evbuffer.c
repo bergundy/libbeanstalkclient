@@ -31,14 +31,14 @@ inline void evbuffer_read_fin(evbuffer *buf)
 
 inline evbuffer_node *evbuffer_getcb(evbuffer *buf)
 {
-    if (BUFFER_HASCB(buf))
+    if (EVBUFFER_HASCB(buf))
         return NULL;
     return buf->cbp;
 }
 
 inline evbuffer_node *evbuffer_get(evbuffer *buf)
 {
-    if (BUFFER_EMPTY(buf))
+    if (EVBUFFER_EMPTY(buf))
         return NULL;
     return buf->readp;
 }
@@ -47,7 +47,7 @@ inline int evbuffer_put(evbuffer *buf, char *msg, size_t msg_len, callback_p_t c
 {
     evbuffer_node *node = NULL;
 
-    if (BUFFER_FULL(buf))
+    if (EVBUFFER_FULL(buf))
         return 0;
 
     node            = buf->writep;

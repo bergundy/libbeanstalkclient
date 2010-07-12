@@ -24,6 +24,7 @@ struct _evvector {
 typedef struct _evvector evvector;
 
 evvector *evvector_new(size_t init_size, size_t realloc_size);
+void      evvector_free(evvector *vec);
 bool      evvector_expand(evvector *vec);
 
 #endif /* EVVECTOR_H */

@@ -1,7 +1,7 @@
 /**
  * =====================================================================================
  * @file   check_evbuffer.c
- * @brief  test suite for configutil.c functions
+ * @brief  test suite for evbuffer functions and macros
  * @date   06/13/2010 05:58:28 PM
  * @author Roey Berman, (royb@walla.net.il), Walla!
  * =====================================================================================
