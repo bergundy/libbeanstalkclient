@@ -96,9 +96,6 @@ evvector_new_err:
 port_strdup_err:
     free(bsc->host);
 host_strdup_err:
-    if (errorstr != NULL && *errorstr != NULL)
-        *errorstr = strdup("out of memory");
-
     free(bsc);
     return NULL;
 }
@@ -119,6 +116,8 @@ bool evbsc_connect(evbsc *bsc, struct ev_loop *loop, char **errorstr)
     for ( i = 0; i < bsc->reconnect_attempts; ++i)
         if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) != SOCKERR )
             goto connect_success;
+        else if ( errorstr != NULL && i < bsc->reconnect_attempts - 1 )
+            free(*errorstr), *errorstr = NULL;
 
     return false;
 
@@ -149,7 +148,9 @@ bool evbsc_reconnect(evbsc *bsc, struct ev_loop *loop)
 
 static void write_ready(EV_P_ ev_io *w, int revents)
 {
+#ifdef DEBUG
     printf("write ready\n");
+#endif
     evbsc *bsc = (evbsc *)w->data;
     IOQ_WRITE_NV(bsc->outq, w->fd, sockerror);
     if (IOQ_EMPTY(bsc->outq))
@@ -172,7 +173,9 @@ sockerror:
 
 static void read_ready(EV_P_ ev_io *w, int revents)
 {
+#ifdef DEBUG
     printf("read ready\n");
+#endif
     /* variable declaration / initialization */
     evbsc    *bsc = (evbsc *)w->data;
     evvector *vec = bsc->vec;
@@ -205,7 +208,9 @@ static void read_ready(EV_P_ ev_io *w, int revents)
 
     //printf("recv: '%s'\n", vec->eom);
     while (bytes_processed != bytes_recv) {
+#ifdef DEBUG
         printf("proccessed: %d/%d/%d\n", bytes_processed, bytes_recv, vec->size);
+#endif
         if ( (node = AQUEUE_REAR(buf) ) == NULL ) {
             /* critical error */
             evbsc_disconnect(bsc, loop);

@@ -16,7 +16,7 @@
 #include "evvector.h"
 
 struct _arrayqueue_node {
-    void   *data;
+    char   *data;
     size_t len;
     size_t bytes_expected;
     void (*cb)( struct _arrayqueue_node *node, char *);
@@ -31,7 +31,7 @@ typedef struct _arrayqueue queue;
 
 #define BSC_ENQ_CMD(cmd, bsc, callback, on_error, ...) do {                 \
     char   *c = NULL;                                                       \
-    size_t c_len;                                                           \
+    int    c_len;                                                           \
     if ( ( c = bsc_gen_ ## cmd ## _cmd(&c_len, ## __VA_ARGS__) ) == NULL )  \
         goto on_error;                                                      \
     if ( !IOQ_PUT( (bsc)->outq, c, c_len, 0 ) )       {                     \
@@ -41,6 +41,7 @@ typedef struct _arrayqueue queue;
     AQUEUE_FRONT_NV((bsc)->cbq)->data = (c);                                \
     AQUEUE_FRONT_NV((bsc)->cbq)->len  = (c_len);                            \
     AQUEUE_FRONT_NV((bsc)->cbq)->cb   = (callback);                         \
+    AQUEUE_FRONT_NV((bsc)->cbq)->bytes_expected = 0;                        \
     AQUEUE_FIN_PUT((bsc)->cbq);                                             \
     ev_io_start(EV_A_ &((bsc)->ww));                                        \
 } while (false)
