@@ -17,33 +17,89 @@ evbsc *bsc;
 char *host = "localhost", *port = BSC_DEFAULT_PORT;
 struct ev_loop *loop;
 int counter = 0;
+int fail = 0;
+char *exp_data;
 
-void small_vec_cb(evbuffer_node *node, char *data)
+void small_vec_cb(queue_node *node, char *data)
 {
     printf("got data: '%s'\n", data);
-    if (counter  > 8) {
-        node->bytes_expected = 10;
+    bsc_response_t res;
+    static uint32_t exp_id;
+    static uint32_t res_id, bytes;
+    switch (counter) {
+        case 0:
+            fail += strcmp(data, "USING test\r\n");
+            break;
+        case 1:
+            fail += strcmp(data, "WATCHING 2\r\n");
+            break;
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6:
+            fail += strcmp(data, "WATCHING 1\r\n");
+            break;
+        case 7:
+        case 11:
+            res = bsc_get_put_res(data, &exp_id);
+            if (res != BSC_PUT_RES_INSERTED)
+                fail++;
+            break;
+        case 8:
+        case 12:
+            res = bsc_get_reserve_res(data, &res_id, &bytes);
+            if (res != BSC_RESERVE_RES_RESERVED || bytes != strlen(exp_data))
+                fail++;
+            node->bytes_expected = bytes;
+            break;
+        case 9:
+        case 13:
+            fail += strcmp(data, exp_data);
+            BSC_ENQ_CMD(delete, bsc, small_vec_cb, cmd_error, res_id );
+            break;
+        case 10:
+        case 14:
+            res = bsc_get_delete_res(data);
+            if ( res != BSC_DELETE_RES_DELETED )
+                ++fail;
+            else if (counter == 10) {
+                exp_data = "bababuba12341234";
+                BSC_ENQ_CMD(put,     bsc, small_vec_cb, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
+                BSC_ENQ_CMD(reserve, bsc, small_vec_cb, cmd_error );
+                break;
+            }
+        default:
+            ev_unloop(EV_A_ EVUNLOOP_ALL);
     }
-    if (++counter == 7) {
-        ev_io_stop(EV_A_ &(bsc->ww));
+    ++counter;
+    if (fail)
         ev_unloop(EV_A_ EVUNLOOP_ALL);
-    }
+
+    return;
+
+cmd_error:
+    ++fail;
+    ev_unloop(EV_A_ EVUNLOOP_ALL);
 }
 
 START_TEST(test_evbsc_small_vec) {
     loop = ev_default_loop(0);
-    fail_if( (bsc = evbsc_new( loop, host, port, 5, 8, 12, 8, 4, NULL) ) == NULL, "out of memory");
+    fail_if( (bsc = evbsc_new( loop, host, port, 5, 10, 12, 8, 4, NULL) ) == NULL, "out of memory");
+    exp_data = "baba";
 
-    BSC_ENQ_CMD(use,    bsc, small_vec_cb, cmd_error, "test");
-    BSC_ENQ_CMD(watch,  bsc, small_vec_cb, cmd_error, "test");
-    BSC_ENQ_CMD(ignore, bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore, bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore, bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore, bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore, bsc, small_vec_cb, cmd_error, "default");
-    ev_io_start(loop, &(bsc->ww));
+    BSC_ENQ_CMD(use,     bsc, small_vec_cb, cmd_error, "test");
+    BSC_ENQ_CMD(watch,   bsc, small_vec_cb, cmd_error, "test");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(put,     bsc, small_vec_cb, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
+    BSC_ENQ_CMD(reserve, bsc, small_vec_cb, cmd_error );
 
     ev_loop(loop, 0);
+    fail_if(fail, "got invalid data");
     return;
 
 cmd_error:

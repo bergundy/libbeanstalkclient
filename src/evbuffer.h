@@ -11,16 +11,15 @@
 
 #include <stdbool.h>
 
-#define EVBUFFER_FULL(buf) ( (buf)->writep->data != NULL )
-#define EVBUFFER_EMPTY(buf) ( (buf)->readp->data == NULL || (buf)->readp->read )
-#define EVBUFFER_HASCB(buf) ( (buf)->cbp->data == NULL )
+#define EVBUFFER_FULL(q)        ( (q)->input_p == (q)->output_p )
+#define EVBUFFER_EMPTY(q)       ( (q)->input_p == (q)->output_p->next )
+
+typedef void (*callback_p_t)(evbuffer_node *node, char *);
 
 struct _evbuffer_node {
     size_t length;
-    off_t  offset;
     char   *data;
-    bool   auto_free;
-    bool   read;
+    bool   autofree;
     size_t bytes_expected;
     void (*cb)( struct _evbuffer_node *node, char *);
     struct _evbuffer_node *next;
@@ -28,22 +27,17 @@ struct _evbuffer_node {
 
 typedef struct _evbuffer_node evbuffer_node;
 
-typedef void (*callback_p_t)(evbuffer_node *node, char *);
-
 struct _evbuffer {
     evbuffer_node *writep;
     evbuffer_node *readp;
-    evbuffer_node *cbp;
     size_t length;
 };
 
 typedef struct _evbuffer evbuffer;
 
-inline void evbuffer_cb_fin(evbuffer *buf);
-inline void evbuffer_read_fin(evbuffer *buf);
-inline evbuffer_node *evbuffer_getcb(evbuffer *buf);
+inline void evbuffer_fin(evbuffer *buf);
 inline evbuffer_node *evbuffer_get(evbuffer *buf);
-inline int evbuffer_put(evbuffer *buf, char *msg, size_t msg_len, callback_p_t cb, bool auto_free);
+inline int evbuffer_put(evbuffer *buf, char *msg, size_t msg_len, callback_p_t cb, bool autofree);
 void evbuffer_free(evbuffer *buf);
 evbuffer *evbuffer_new(size_t init_len);
 
