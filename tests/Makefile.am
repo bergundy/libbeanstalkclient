@@ -5,6 +5,6 @@ ALL_LIBS = -lev -lbeanstalkclient -lsockutils -lioqueue
 srcdir = $(top_builddir)/src
 AM_CFLAGS = -I$(srcdir) 
 
-commands_t_SOURCES = check_commands.c evbsc.h
-commands_t_CFLAGS  = @CHECK_CFLAGS@ $(AM_CFLAGS)
-commands_t_LDADD   = @CHECK_LIBS@ $(srcdir)/evbsc.o
+evbsc_t_SOURCES = check_evbsc.c evbsc.h
+evbsc_t_CFLAGS  = @CHECK_CFLAGS@ $(AM_CFLAGS)
+evbsc_t_LDADD   = @CHECK_LIBS@ $(srcdir)/*.o

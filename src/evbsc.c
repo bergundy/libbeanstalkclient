@@ -96,9 +96,6 @@ evvector_new_err:
 port_strdup_err:
     free(bsc->host);
 host_strdup_err:
-    if (errorstr != NULL && *errorstr != NULL)
-        *errorstr = strdup("out of memory");
-
     free(bsc);
     return NULL;
 }
@@ -119,6 +116,8 @@ bool evbsc_connect(evbsc *bsc, struct ev_loop *loop, char **errorstr)
     for ( i = 0; i < bsc->reconnect_attempts; ++i)
         if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) != SOCKERR )
             goto connect_success;
+        else if ( errorstr != NULL && i < bsc->reconnect_attempts - 1 )
+            free(*errorstr), *errorstr = NULL;
 
     return false;
 

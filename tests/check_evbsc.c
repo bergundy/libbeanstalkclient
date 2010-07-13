@@ -85,7 +85,9 @@ cmd_error:
 
 START_TEST(test_evbsc_small_vec) {
     loop = ev_default_loop(0);
-    fail_if( (bsc = evbsc_new( loop, host, port, 5, 10, 12, 8, 4, NULL) ) == NULL, "out of memory");
+    char *errstr = NULL;
+    bsc = evbsc_new( loop, host, port, 5, 10, 12, 8, 4, &errstr);
+    fail_if( bsc == NULL, "evbsc_new: %s", errstr);
     exp_data = "baba";
 
     BSC_ENQ_CMD(use,     bsc, small_vec_cb, cmd_error, "test");
