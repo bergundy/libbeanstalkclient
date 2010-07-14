@@ -22,7 +22,7 @@ char *exp_data;
 
 void small_vec_cb(queue_node *node, char *data, size_t len)
 {
-    printf("got data: '%s'\n", data);
+    //printf("got data: '%s'\n", data);
     bsc_response_t res;
     static uint32_t exp_id;
     static uint32_t res_id, bytes;
