@@ -223,7 +223,7 @@ static void read_ready(EV_P_ ev_io *w, int revents)
             eom = vec->som + node->bytes_expected;
             bytes_processed += eom - vec->eom + 2;
             *eom = '\0';
-            node->cb(node, vec->som);
+            node->cb(node, vec->som, eom - vec->som);
             vec->eom = vec->som = eom + 2;
             QUEUE_FIN_CMD(buf);
         }
@@ -234,7 +234,7 @@ static void read_ready(EV_P_ ev_io *w, int revents)
             bytes_processed += ++eom - vec->eom;
             ctmp = *eom;
             *eom = '\0';
-            node->cb(node, vec->som);
+            node->cb(node, vec->som, eom - vec->som);
             *eom = ctmp;
             vec->eom = vec->som = eom;
             if (!node->bytes_expected)
