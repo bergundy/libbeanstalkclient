@@ -19,11 +19,11 @@ struct _arrayqueue_node {
     char   *data;
     size_t len;
     size_t bytes_expected;
-    void (*cb)( struct _arrayqueue_node *node, char *);
+    void (*cb)( struct _arrayqueue_node *node, char *, size_t);
 };
 
 typedef struct _arrayqueue_node queue_node;
-typedef void (*callback_p_t)(queue_node *node, char *);
+typedef void (*callback_p_t)(queue_node *node, char *, size_t);
 
 #include "arrayqueue.h"
 
