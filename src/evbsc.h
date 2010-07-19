@@ -20,18 +20,20 @@
 #include "evvector.h"
 
 struct _evbsc;
+struct _arrayqueue_node;
+
+typedef void (*callback_p_t)(struct _evbsc *, struct _arrayqueue_node *, void *, size_t);
 
 struct _arrayqueue_node {
-    char   *data;
+    void   *data;
     size_t len;
     size_t bytes_expected;
-    void (*cb)( struct _evbsc *, struct _arrayqueue_node *, char *, size_t);
+    callback_p_t cb;
 };
 
 typedef struct _arrayqueue_node queue_node;
-#include "arrayqueue.h"
 
-typedef void (*callback_p_t)(struct _evbsc *bsc, queue_node *node, char *, size_t);
+#include "arrayqueue.h"
 
 typedef struct _arrayqueue queue;
 
@@ -69,6 +71,7 @@ typedef struct _arrayqueue queue;
         (errorstr) ) )
 
 enum _evbsc_error_e_t { EVBSC_ERROR_INTERNAL, EVBSC_ERROR_SOCKET };
+
 typedef enum _evbsc_error_e_t evbsc_error_t;
 
 typedef void (*error_callback_p_t)(struct _evbsc *bsc, evbsc_error_t);

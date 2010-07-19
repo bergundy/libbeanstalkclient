@@ -20,7 +20,7 @@ int counter = 0;
 int fail = 0;
 char *exp_data;
 
-void small_vec_cb(evbsc *bsc, queue_node *node, char *data, size_t len)
+void small_vec_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
 {
     //printf("got data: '%s'\n", data);
     bsc_response_t res;
@@ -85,7 +85,7 @@ cmd_error:
     ev_unloop(EV_A_ EVUNLOOP_ALL);
 }
 
-void fin_cb(evbsc *bsc, queue_node *node, char *data, size_t len)
+void fin_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
 {
     ev_unloop(bsc->loop, EVUNLOOP_ALL);
 }

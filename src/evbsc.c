@@ -122,7 +122,6 @@ bool evbsc_connect(evbsc *bsc, char **errorstr)
     if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
         return false;
 
-connect_success:
     ev_io_init( &(bsc->rw), read_ready,  bsc->fd, EV_READ  );
     ev_io_init( &(bsc->ww), write_ready, bsc->fd, EV_WRITE );
     bsc->rw.data = bsc;
