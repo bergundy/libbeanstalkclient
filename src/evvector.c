@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include "evvector.h"
 
-evvector *evvector_new(size_t init_size, size_t realloc_size)
+evvector *evvector_new(size_t init_size)
 {
     evvector *vec = NULL;
 
@@ -26,28 +26,27 @@ evvector *evvector_new(size_t init_size, size_t realloc_size)
 
     vec->som = vec->eom = vec->data;
     vec->size           = init_size;
-    vec->realloc_size   = realloc_size;
 
     return vec;
 }
 
-void      evvector_free(evvector *vec)
+void evvector_free(evvector *vec)
 {
     free(vec->data);
     free(vec);
 }
 
-bool      evvector_expand(evvector *vec)
+bool evvector_expand(evvector *vec)
 {
     char *realloc_data = NULL;
 
-    if ( ( realloc_data = (char *)realloc( vec->data, sizeof(char) * (vec->size + vec->realloc_size) ) ) == NULL )
+    if ( ( realloc_data = (char *)realloc( vec->data, sizeof(char) * vec->size * 2 ) ) == NULL )
         return false;
 
     vec->som  = vec->som - vec->data + realloc_data;
     vec->eom  = vec->eom - vec->data + realloc_data;
     vec->data = realloc_data;
-    vec->size += vec->realloc_size;
+    vec->size *= 2;
 
     return true;
 }

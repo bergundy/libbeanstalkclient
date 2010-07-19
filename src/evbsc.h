@@ -9,23 +9,29 @@
 #ifndef EVBSC_H
 #define EVBSC_H 
 
+#ifdef __cplusplus
+    extern "C" {
+#endif
+
 #include <stdbool.h>
 #include <ev.h>
 #include <beanstalkclient.h>
 #include <ioqueue.h>
 #include "evvector.h"
 
+struct _evbsc;
+
 struct _arrayqueue_node {
     char   *data;
     size_t len;
     size_t bytes_expected;
-    void (*cb)( struct _arrayqueue_node *node, char *, size_t);
+    void (*cb)( struct _evbsc *, struct _arrayqueue_node *, char *, size_t);
 };
 
 typedef struct _arrayqueue_node queue_node;
-typedef void (*callback_p_t)(queue_node *node, char *, size_t);
-
 #include "arrayqueue.h"
+
+typedef void (*callback_p_t)(struct _evbsc *bsc, queue_node *node, char *, size_t);
 
 typedef struct _arrayqueue queue;
 
@@ -43,13 +49,29 @@ typedef struct _arrayqueue queue;
     AQUEUE_FRONT_NV((bsc)->cbq)->cb   = (callback);                         \
     AQUEUE_FRONT_NV((bsc)->cbq)->bytes_expected = 0;                        \
     AQUEUE_FIN_PUT((bsc)->cbq);                                             \
-    ev_io_start(EV_A_ &((bsc)->ww));                                        \
+    ev_io_start((bsc)->loop, &((bsc)->ww));                                 \
 } while (false)
 
 #define QUEUE_FIN_CMD(q) do {      \
     free(AQUEUE_REAR_NV(q)->data); \
     AQUEUE_FIN_GET(q);             \
 } while (false)
+
+#define EVBSC_DEFAULT_BUFFER_SIZE 1024
+#define EVBSC_DEFAULT_VECTOR_SIZE 1024
+#define EVBSC_DEFAULT_VECTOR_MIN  256
+
+#define evbsc_new_w_defaults(loop, host, port, onerror, errorstr)   \
+    ( evbsc_new( (loop), (host), (port), (onerror),                 \
+        EVBSC_DEFAULT_BUFFER_SIZE,                                  \
+        EVBSC_DEFAULT_VECTOR_SIZE,                                  \
+        EVBSC_DEFAULT_VECTOR_MIN,                                   \
+        (errorstr) ) )
+
+enum _evbsc_error_e_t { EVBSC_ERROR_INTERNAL, EVBSC_ERROR_SOCKET };
+typedef enum _evbsc_error_e_t evbsc_error_t;
+
+typedef void (*error_callback_p_t)(struct _evbsc *bsc, evbsc_error_t);
 
 struct _evbsc {
     int      fd;
@@ -60,18 +82,22 @@ struct _evbsc {
     queue    *cbq;
     ioq      *outq;
     evvector *vec;
-    unsigned reconnect_attempts;
     size_t   vec_min;
+    error_callback_p_t onerror;
+    struct ev_loop     *loop;
 };
 
 typedef struct _evbsc evbsc;
 
-evbsc *evbsc_new( struct ev_loop *loop, char *host, char *port, unsigned reconnect_attempts,
-                  size_t buf_len, size_t vec_len, size_t vec_rlen, size_t vec_min, char **errorstr );
+evbsc *evbsc_new( struct ev_loop *loop, const char *host, const char *port, error_callback_p_t onerror,
+                  size_t buf_len, size_t vec_len, size_t vec_min, char **errorstr );
 
 void evbsc_free(evbsc *bsc);
-bool evbsc_connect(evbsc *bsc, struct ev_loop *loop, char **errorstr);
-void evbsc_disconnect(evbsc *bsc, struct ev_loop *loop);
-bool evbsc_reconnect(evbsc *bsc, struct ev_loop *loop);
+bool evbsc_connect(evbsc *bsc, char **errorstr);
+void evbsc_disconnect(evbsc *bsc);
+bool evbsc_reconnect(evbsc *bsc, char **errorstr);
 
+#ifdef __cplusplus
+    }
+#endif
 #endif /* EVBSC_H */

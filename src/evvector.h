@@ -18,12 +18,11 @@ struct _evvector {
     char  *som;
     char  *eom;
     size_t size;
-    size_t realloc_size;
 };
 
 typedef struct _evvector evvector;
 
-evvector *evvector_new(size_t init_size, size_t realloc_size);
+evvector *evvector_new(size_t init_size);
 void      evvector_free(evvector *vec);
 bool      evvector_expand(evvector *vec);
 

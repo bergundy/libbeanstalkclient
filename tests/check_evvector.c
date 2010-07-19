@@ -16,7 +16,7 @@
 evvector *vec;
 
 START_TEST(test_evvector) {
-    fail_if( (vec = evvector_new(2, 2) ) == NULL, "out of memory");
+    fail_if( (vec = evvector_new(2) ) == NULL, "out of memory");
     vec->data[0] = 'a';
     vec->data[1] = '\0';
     fail_if( strcmp(vec->data, "a") != 0, "got bad data");

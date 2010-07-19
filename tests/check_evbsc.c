@@ -20,7 +20,7 @@ int counter = 0;
 int fail = 0;
 char *exp_data;
 
-void small_vec_cb(queue_node *node, char *data, size_t len)
+void small_vec_cb(evbsc *bsc, queue_node *node, char *data, size_t len)
 {
     //printf("got data: '%s'\n", data);
     bsc_response_t res;
@@ -85,10 +85,21 @@ cmd_error:
     ev_unloop(EV_A_ EVUNLOOP_ALL);
 }
 
+void fin_cb(evbsc *bsc, queue_node *node, char *data, size_t len)
+{
+    ev_unloop(bsc->loop, EVUNLOOP_ALL);
+}
+
+void onerror(evbsc *bsc, evbsc_error_t error)
+{
+    ++fail;
+    fail("evbsc got error");
+}
+
 START_TEST(test_evbsc_small_vec) {
     loop = ev_default_loop(0);
     char *errstr = NULL;
-    bsc = evbsc_new( loop, host, port, 5, 10, 12, 8, 4, &errstr);
+    bsc = evbsc_new( loop, host, port, onerror, 11, 12, 4, &errstr);
     fail_if( bsc == NULL, "evbsc_new: %s", errstr);
     exp_data = "baba";
 
@@ -99,6 +110,7 @@ START_TEST(test_evbsc_small_vec) {
     BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
     BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
     BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
     BSC_ENQ_CMD(put,     bsc, small_vec_cb, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
     BSC_ENQ_CMD(reserve, bsc, small_vec_cb, cmd_error );
 
@@ -112,12 +124,35 @@ cmd_error:
 }
 END_TEST
 
+START_TEST(test_evbsc_defaults) {
+    loop = ev_default_loop(0);
+    char *errstr = NULL;
+    bsc = evbsc_new_w_defaults( loop, host, port, onerror, &errstr);
+    fail_if( bsc == NULL, "evbsc_new: %s", errstr);
+
+    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, fin_cb, cmd_error, "default");
+
+    ev_loop(loop, 0);
+    fail_if(fail, "got invalid data");
+    return;
+
+cmd_error:
+    evbsc_free(bsc);
+    fail("cmd_error");
+}
+END_TEST
+
+
 Suite *local_suite(void)
 {
     Suite *s  = suite_create(__FILE__);
     TCase *tc = tcase_create("evbsc");
 
     tcase_add_test(tc, test_evbsc_small_vec);
+    tcase_add_test(tc, test_evbsc_defaults);
 
     suite_add_tcase(s, tc);
     return s;

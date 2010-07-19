@@ -7,6 +7,10 @@
  * =====================================================================================
  */
 
+#ifdef __cplusplus
+    extern "C" {
+#endif
+
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -46,8 +50,8 @@ static void queue_free(queue *q)
     free(q);
 }
 
-evbsc *evbsc_new( struct ev_loop *loop, char *host, char *port, unsigned reconnect_attempts,
-                  size_t buf_len, size_t vec_len, size_t vec_rlen, size_t vec_min, char **errorstr )
+evbsc *evbsc_new( struct ev_loop *loop, const char *host, const char *port, error_callback_p_t onerror,
+                  size_t buf_len, size_t vec_len, size_t vec_min, char **errorstr )
 {
     evbsc *bsc = NULL;
 
@@ -68,7 +72,7 @@ evbsc *evbsc_new( struct ev_loop *loop, char *host, char *port, unsigned reconne
     if ( ( bsc->port = strdup(port) ) == NULL )
         goto port_strdup_err;
 
-    if ( ( bsc->vec = evvector_new(vec_len, vec_rlen) ) == NULL )
+    if ( ( bsc->vec = evvector_new(vec_len) ) == NULL )
         goto evvector_new_err;
 
     if ( ( bsc->cbq = queue_new(buf_len) ) == NULL )
@@ -77,10 +81,11 @@ evbsc *evbsc_new( struct ev_loop *loop, char *host, char *port, unsigned reconne
     if ( ( bsc->outq = ioq_new(buf_len) ) == NULL )
         goto ioq_new_err;
 
-    bsc->reconnect_attempts = reconnect_attempts;
-    bsc->vec_min            = vec_min;
+    bsc->loop        = loop;
+    bsc->vec_min     = vec_min;
+    bsc->onerror     = onerror;
 
-    if ( !evbsc_connect(bsc, loop, errorstr) )
+    if ( !evbsc_connect(bsc, errorstr) )
         goto connect_error;
 
     return bsc;
@@ -97,6 +102,8 @@ port_strdup_err:
     free(bsc->host);
 host_strdup_err:
     free(bsc);
+    if (errorstr != NULL && *errorstr == NULL)
+        *errorstr = strdup("out of memory");
     return NULL;
 }
 
@@ -110,40 +117,49 @@ void evbsc_free(evbsc *bsc)
     free(bsc);
 }
 
-bool evbsc_connect(evbsc *bsc, struct ev_loop *loop, char **errorstr)
+bool evbsc_connect(evbsc *bsc, char **errorstr)
 {
-    unsigned i;
-    for ( i = 0; i < bsc->reconnect_attempts; ++i)
-        if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) != SOCKERR )
-            goto connect_success;
-        else if ( errorstr != NULL && i < bsc->reconnect_attempts - 1 )
-            free(*errorstr), *errorstr = NULL;
-
-    return false;
+    if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
+        return false;
 
 connect_success:
     ev_io_init( &(bsc->rw), read_ready,  bsc->fd, EV_READ  );
     ev_io_init( &(bsc->ww), write_ready, bsc->fd, EV_WRITE );
     bsc->rw.data = bsc;
     bsc->ww.data = bsc;
-    ev_io_start(loop, &(bsc->rw));
+    ev_io_start(bsc->loop, &(bsc->rw));
     if (!IOQ_EMPTY(bsc->outq))
-        ev_io_start(loop, &(bsc->ww));
+        ev_io_start(bsc->loop, &(bsc->ww));
 
     return true;
 }
 
-void evbsc_disconnect(evbsc *bsc, struct ev_loop *loop)
+void evbsc_disconnect(evbsc *bsc)
 {
-    ev_io_stop(loop, &(bsc->rw));
-    ev_io_stop(loop, &(bsc->ww));
+    ev_io_stop(bsc->loop, &(bsc->rw));
+    ev_io_stop(bsc->loop, &(bsc->ww));
     while ( close(bsc->fd) == SOCKERR && errno != EBADF ) ;
 }
 
-bool evbsc_reconnect(evbsc *bsc, struct ev_loop *loop)
+bool evbsc_reconnect(evbsc *bsc, char **errorstr)
 {
-    evbsc_disconnect(bsc, loop);
-    return evbsc_connect(bsc, loop, NULL);
+    evbsc_disconnect(bsc);
+    return evbsc_connect(bsc, errorstr);
+}
+
+static void sock_write_error(void *self)
+{
+    evbsc *bsc = (evbsc *)self;
+    switch (errno) {
+        case EAGAIN:
+        case EINTR:
+            /* temporary error, the callback will be rescheduled */
+            break;
+        case EINVAL:
+        default:
+            /* unexpected socket error - yield client callback */
+            bsc->onerror(bsc, EVBSC_ERROR_SOCKET);
+    }
 }
 
 static void write_ready(EV_P_ ev_io *w, int revents)
@@ -152,23 +168,11 @@ static void write_ready(EV_P_ ev_io *w, int revents)
     printf("write ready\n");
 #endif
     evbsc *bsc = (evbsc *)w->data;
-    IOQ_WRITE_NV(bsc->outq, w->fd, sockerror);
+    ioq_write_nv(bsc->outq, w->fd, sock_write_error, (void *)bsc);
     if (IOQ_EMPTY(bsc->outq))
         ev_io_stop(loop, &(bsc->ww));
 
     return;
-        
-sockerror:
-    switch (errno) {
-        case EAGAIN:
-        case EINTR:
-            /* temporary error, the callback will be rescheduled */
-            break;
-        case EINVAL:
-        default:
-            /* unexpected socket error - reconnect */
-            evbsc_reconnect(bsc, loop);
-    }
 }
 
 static void read_ready(EV_P_ ev_io *w, int revents)
@@ -201,7 +205,7 @@ static void read_ready(EV_P_ ev_io *w, int revents)
                 }
             default:
                 /* unexpected socket error - reconnect */
-                evbsc_reconnect(bsc, loop);
+                bsc->onerror(bsc, EVBSC_ERROR_SOCKET);
                 return;
         }
     }
@@ -213,7 +217,7 @@ static void read_ready(EV_P_ ev_io *w, int revents)
 #endif
         if ( (node = AQUEUE_REAR(buf) ) == NULL ) {
             /* critical error */
-            evbsc_disconnect(bsc, loop);
+            bsc->onerror(bsc, EVBSC_ERROR_INTERNAL);
             return;
         }
         if (node->bytes_expected) {
@@ -222,20 +226,24 @@ static void read_ready(EV_P_ ev_io *w, int revents)
 
             eom = vec->som + node->bytes_expected;
             bytes_processed += eom - vec->eom + 2;
-            *eom = '\0';
-            node->cb(node, vec->som, eom - vec->som);
+            if (node->cb != NULL) {
+                *eom = '\0';
+                node->cb(bsc, node, vec->som, eom - vec->som);
+            }
             vec->eom = vec->som = eom + 2;
             QUEUE_FIN_CMD(buf);
         }
         else {
-            if ( ( eom = memchr(vec->eom, '\n', bytes_recv - bytes_processed) ) == NULL )
+            if ( ( eom = (char *)memchr(vec->eom, '\n', bytes_recv - bytes_processed) ) == NULL )
                 goto in_middle_of_msg;
 
             bytes_processed += ++eom - vec->eom;
-            ctmp = *eom;
-            *eom = '\0';
-            node->cb(node, vec->som, eom - vec->som);
-            *eom = ctmp;
+            if (node->cb != NULL) {
+                ctmp = *eom;
+                *eom = '\0';
+                node->cb(bsc, node, vec->som, eom - vec->som);
+                *eom = ctmp;
+            }
             vec->eom = vec->som = eom;
             if (!node->bytes_expected)
                 QUEUE_FIN_CMD(buf);
@@ -247,3 +255,7 @@ static void read_ready(EV_P_ ev_io *w, int revents)
 in_middle_of_msg:
     vec->eom += bytes_recv - bytes_processed;
 }
+
+#ifdef __cplusplus
+    }
+#endif
