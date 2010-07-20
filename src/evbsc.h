@@ -4,6 +4,9 @@
  * @brief  header file for evbsc - libev implementation of the beanstalk client library
  * @date   07/05/2010 06:50:22 PM
  * @author Roey Berman, (royb@walla.net.il), Walla!
+ * @todo   add list/hash of watched tubes for reconnect
+ * @todo   requeue uncompleted task
+ * @todo   change BSC_ENQ_CMD to normal function and make the callback api easier
  * =====================================================================================
  */
 #ifndef EVBSC_H
@@ -88,6 +91,7 @@ struct _evbsc {
     ioq      *outq;
     evvector *vec;
     size_t   vec_min;
+    void     *data;
     error_callback_p_t onerror;
     struct ev_loop     *loop;
 };
