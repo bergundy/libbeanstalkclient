@@ -56,7 +56,7 @@ void small_vec_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
         case 9:
         case 13:
             fail += strcmp(data, exp_data);
-            BSC_ENQ_CMD(delete, bsc, small_vec_cb, cmd_error, res_id );
+            BSC_ENQ_CMD(delete, bsc, small_vec_cb, NULL, cmd_error, res_id );
             break;
         case 10:
         case 14:
@@ -65,8 +65,8 @@ void small_vec_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
                 ++fail;
             else if (counter == 10) {
                 exp_data = "bababuba12341234";
-                BSC_ENQ_CMD(put,     bsc, small_vec_cb, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
-                BSC_ENQ_CMD(reserve, bsc, small_vec_cb, cmd_error );
+                BSC_ENQ_CMD(put,     bsc, small_vec_cb, NULL, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
+                BSC_ENQ_CMD(reserve, bsc, small_vec_cb, NULL, cmd_error );
                 break;
             }
         default:
@@ -87,6 +87,8 @@ cmd_error:
 
 void fin_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
 {
+    if (strcmp(node->cb_data, exp_data) != 0)
+        fail++;
     ev_unloop(bsc->loop, EVUNLOOP_ALL);
 }
 
@@ -103,16 +105,16 @@ START_TEST(test_evbsc_small_vec) {
     fail_if( bsc == NULL, "evbsc_new: %s", errstr);
     exp_data = "baba";
 
-    BSC_ENQ_CMD(use,     bsc, small_vec_cb, cmd_error, "test");
-    BSC_ENQ_CMD(watch,   bsc, small_vec_cb, cmd_error, "test");
-    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(put,     bsc, small_vec_cb, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
-    BSC_ENQ_CMD(reserve, bsc, small_vec_cb, cmd_error );
+    BSC_ENQ_CMD(use,     bsc, small_vec_cb, NULL, cmd_error, "test");
+    BSC_ENQ_CMD(watch,   bsc, small_vec_cb, NULL, cmd_error, "test");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, small_vec_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(put,     bsc, small_vec_cb, NULL, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
+    BSC_ENQ_CMD(reserve, bsc, small_vec_cb, NULL, cmd_error );
 
     ev_loop(loop, 0);
     fail_if(fail, "got invalid data");
@@ -127,13 +129,14 @@ END_TEST
 START_TEST(test_evbsc_defaults) {
     loop = ev_default_loop(0);
     char *errstr = NULL;
+    exp_data = "baba";
     bsc = evbsc_new_w_defaults( loop, host, port, onerror, &errstr);
     fail_if( bsc == NULL, "evbsc_new: %s", errstr);
 
-    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  bsc, fin_cb, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, NULL, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(ignore,  bsc, fin_cb, exp_data, cmd_error, "default");
 
     ev_loop(loop, 0);
     fail_if(fail, "got invalid data");

@@ -28,6 +28,7 @@ struct _arrayqueue_node {
     void   *data;
     size_t len;
     size_t bytes_expected;
+    void   *cb_data;
     callback_p_t cb;
 };
 
@@ -37,7 +38,7 @@ typedef struct _arrayqueue_node queue_node;
 
 typedef struct _arrayqueue queue;
 
-#define BSC_ENQ_CMD(cmd, bsc, callback, on_error, ...) do {                 \
+#define BSC_ENQ_CMD(cmd, bsc, callback, callback_data, on_error, ...) do {  \
     char   *c = NULL;                                                       \
     int    c_len;                                                           \
     if ( ( c = bsc_gen_ ## cmd ## _cmd(&c_len, ## __VA_ARGS__) ) == NULL )  \
@@ -46,9 +47,10 @@ typedef struct _arrayqueue queue;
         free(c);                                                            \
         goto on_error;                                                      \
     }                                                                       \
-    AQUEUE_FRONT_NV((bsc)->cbq)->data = (c);                                \
-    AQUEUE_FRONT_NV((bsc)->cbq)->len  = (c_len);                            \
-    AQUEUE_FRONT_NV((bsc)->cbq)->cb   = (callback);                         \
+    AQUEUE_FRONT_NV((bsc)->cbq)->data    = (c);                             \
+    AQUEUE_FRONT_NV((bsc)->cbq)->len     = (c_len);                         \
+    AQUEUE_FRONT_NV((bsc)->cbq)->cb      = (callback);                      \
+    AQUEUE_FRONT_NV((bsc)->cbq)->cb_data = (callback_data);                 \
     AQUEUE_FRONT_NV((bsc)->cbq)->bytes_expected = 0;                        \
     AQUEUE_FIN_PUT((bsc)->cbq);                                             \
     ev_io_start((bsc)->loop, &((bsc)->ww));                                 \
