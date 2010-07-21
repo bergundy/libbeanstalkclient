@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
@@ -119,6 +120,8 @@ void evbsc_free(evbsc *bsc)
 
 bool evbsc_connect(evbsc *bsc, char **errorstr)
 {
+    ptrdiff_t queue_diff;
+
     if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
         return false;
 
@@ -127,6 +130,13 @@ bool evbsc_connect(evbsc *bsc, char **errorstr)
     bsc->rw.data = bsc;
     bsc->ww.data = bsc;
     ev_io_start(bsc->loop, &(bsc->rw));
+
+    if ( ( queue_diff = (bsc->cbq->used - IOQ_NODES_USED(bsc->outq) ) ) > 0 ) {
+        bsc->outq->output_p -= queue_diff;
+        if (bsc->outq->output_p < bsc->outq->nodes_begin)
+            bsc->outq->output_p += bsc->outq->nodes_end - bsc->outq->nodes_begin + 1;
+    }
+
     if (!IOQ_EMPTY(bsc->outq))
         ev_io_start(bsc->loop, &(bsc->ww));
 

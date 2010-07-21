@@ -20,7 +20,8 @@ struct ev_loop *loop;
 int counter = 0;
 int fail = 0;
 char *exp_data;
-static char cmd_str[200];
+static char spawn_cmd[200];
+static char kill_cmd[200];
 
 void small_vec_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
 {
@@ -152,65 +153,31 @@ END_TEST
 
 void reconnect_test_cb(evbsc *bsc, queue_node *node, void *data, size_t len)
 {
-    char kill_cmd[200];
-    uint32_t res_id, bytes;
-    bsc_response_t res;
-    if (node->cb_data == NULL) {
-        sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
-        system(kill_cmd);
-    }
-    else {
-        if (node->bytes_expected) { 
-            printf("got data: '%s'\n", data);
-            ev_unloop(bsc->loop, EVUNLOOP_ALL);
-        }
-        else {  
-            printf("got second callback\n");
-            fail--;
-            res = bsc_get_reserve_res((char *)data, &res_id, &bytes);
-            if (res != BSC_RESERVE_RES_RESERVED)
-                goto cmd_error;
-
-            node->bytes_expected = bytes;
-        }
-
-    }
-    return;
-
-cmd_error:
-    evbsc_free(bsc);
-    fail("cmd_error");
-    ev_unloop(EV_A_ EVUNLOOP_ALL);
+    system(kill_cmd);
 }
 
 static void reconnect(evbsc *bsc, evbsc_error_t error)
 {
     int i;
     char *errorstr;
-    system(cmd_str);
+    system(spawn_cmd);
 
     if (error == EVBSC_ERROR_INTERNAL) {
         fprintf(stderr, "critical error: recieved EVBSC_ERROR_INTERNAL, quitting\n");
         exit(1);
     }
     else if (error == EVBSC_ERROR_SOCKET) {
-        BSC_ENQ_CMD(put,     bsc, NULL, NULL, cmd_error, 1, 0, 10, strlen(cmd_str), cmd_str);
-        BSC_ENQ_CMD(reserve, bsc, reconnect_test_cb, "baba", cmd_error);
+        BSC_ENQ_CMD(put,     bsc, NULL, NULL, cmd_error, 1, 0, 10, strlen(kill_cmd), kill_cmd);
         fprintf(stderr, "error: recieved EVBSC_ERROR_SOCKET, attempting to reconnect ...\n");
-        for (i = 0; i < 1; ++i) {
-            if ( evbsc_reconnect(bsc, &errorstr) ) {
-                fail++;
-                return;
-            }
-            else {
-                fprintf(stderr, "error: reconnect attempt %d/%d - %s", i+1, 1, errorstr);
-                if (errorstr != NULL)
-                    free(errorstr);
-            }
+        if ( evbsc_reconnect(bsc, &errorstr) ) {
+            fail_if( IOQ_NODES_USED(bsc->outq) != 4, 
+                "after reconnect: IOQ_NODES_USED : %d/%d", IOQ_NODES_USED(bsc->outq), 4);
+
+            ev_unloop(EV_A_ EVUNLOOP_ALL);
+            return;
         }
     }
-    fprintf(stderr, "critical error: maxed out reconnect attempts, quitting\n");
-    fail++;
+    fail("critical error: maxed out reconnect attempts, quitting\n");
     ev_unloop(EV_A_ EVUNLOOP_ALL);
     return;
 
@@ -223,15 +190,19 @@ cmd_error:
 START_TEST(test_evbsc_reconnect) {
     loop = ev_default_loop(0);
     char *errstr = NULL;
-    sprintf(cmd_str, "beanstalkd -p %s -d", reconnect_test_port);
-    system(cmd_str);
-    bsc = evbsc_new_w_defaults( loop, host, reconnect_test_port, reconnect, &errstr);
+    sprintf(spawn_cmd, "beanstalkd -p %s -d", reconnect_test_port);
+    sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
+    system(spawn_cmd);
+    bsc = evbsc_new( loop, host, reconnect_test_port, reconnect, 5, 12, 4, &errstr);
     fail_if( bsc == NULL, "evbsc_new: %s", errstr);
 
     BSC_ENQ_CMD(ignore,  bsc, reconnect_test_cb, NULL, cmd_error, "default");
+    BSC_ENQ_CMD(reserve,  bsc, reconnect_test_cb, "1", cmd_error);
+    BSC_ENQ_CMD(reserve,  bsc, reconnect_test_cb, "1", cmd_error);
+    BSC_ENQ_CMD(reserve,  bsc, reconnect_test_cb, "1", cmd_error);
 
     ev_loop(loop, 0);
-    fail_if(fail, "error reconnecting");
+    system(kill_cmd);
     return;
 
 cmd_error:
