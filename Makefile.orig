@@ -3,29 +3,29 @@ CFLAGS=-Wall -Werror -g
 SRCDIR=src
 TESTDIR=tests
 TEST_FLAGS=-I$(SRCDIR) -lcheck
-LIBS=-lev -lsockutils -lbeanstalkclient -lioqueue
-OBJECTS=evbsc.o evvector.o
+LIBS=-lev -lsockutils -lbeanstalkproto -lioqueue
+OBJECTS=beanstalkclient.o evvector.o
 
-all:     libevbeanstalkclient.so
+all:     libbeanstalkclient.so
 
-check: $(TESTDIR)/evvector.t $(TESTDIR)/evbsc.t
-	$(TESTDIR)/evvector.t  
-	$(TESTDIR)/evbsc.t  
+check: $(TESTDIR)/ivector.t $(TESTDIR)/bsc.t
+	$(TESTDIR)/ivector.t  
+	$(TESTDIR)/bsc.t  
 
-$(TESTDIR)/evbsc.t: $(TESTDIR)/check_evbsc.c evbsc.o
-	$(CC) $(TEST_FLAGS) -o $(TESTDIR)/evbsc.t $(TESTDIR)/check_evbsc.c $(OBJECTS) $(LIBS)
+$(TESTDIR)/bsc.t: $(TESTDIR)/check_bsc.c evbsc.o
+	$(CC) $(TEST_FLAGS) -o $(TESTDIR)/bsc.t $(TESTDIR)/check_bsc.c $(OBJECTS) $(LIBS)
 
-$(TESTDIR)/evvector.t: $(TESTDIR)/check_evvector.c evvector.o
-	$(CC) $(CFLAGS) $(TEST_FLAGS) -o $(TESTDIR)/evvector.t $(TESTDIR)/check_evvector.c evvector.o
+$(TESTDIR)/ivector.t: $(TESTDIR)/check_ivector.c ivector.o
+	$(CC) $(CFLAGS) $(TEST_FLAGS) -o $(TESTDIR)/ivector.t $(TESTDIR)/check_ivector.c ivector.o
 
-libevbeanstalkclient.so: $(OBJECTS)
-	$(CC) $(CFLAGS) --shared -o libevbeanstalkclient.so $(OBJECTS) $(LIBS)
+libbeanstalkclient.so: $(OBJECTS)
+	$(CC) $(CFLAGS) --shared -o libbeanstalkclient.so $(OBJECTS) $(LIBS)
 
-evvector.o:    $(SRCDIR)/evvector.c
-	$(CC) $(CFLAGS) -c $(SRCDIR)/evvector.c
+ivector.o:    $(SRCDIR)/ivector.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ivector.c
 
-evbsc.o:    $(SRCDIR)/evbsc.c
-	$(CC) $(CFLAGS) -c $(SRCDIR)/evbsc.c
+beanstalkclient.o:    $(SRCDIR)/beanstalkclient.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/beanstalkclient.c
 
 clean:
 	rm -f *.so *.o tests/*.t
