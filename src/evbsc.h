@@ -14,7 +14,6 @@
 #endif
 
 #include <stdbool.h>
-#include <ev.h>
 #include <beanstalkclient.h>
 #include <ioqueue.h>
 #include "evvector.h"
@@ -51,7 +50,6 @@ typedef struct _arrayqueue queue;
     AQUEUE_FRONT_NV((bsc)->cbq)->cb   = (callback);                         \
     AQUEUE_FRONT_NV((bsc)->cbq)->bytes_expected = 0;                        \
     AQUEUE_FIN_PUT((bsc)->cbq);                                             \
-    ev_io_start((bsc)->loop, &((bsc)->ww));                                 \
 } while (false)
 
 #define QUEUE_FIN_CMD(q) do {      \
@@ -63,11 +61,11 @@ typedef struct _arrayqueue queue;
 #define EVBSC_DEFAULT_VECTOR_SIZE 1024
 #define EVBSC_DEFAULT_VECTOR_MIN  256
 
-#define evbsc_new_w_defaults(loop, host, port, onerror, errorstr)   \
-    ( evbsc_new( (loop), (host), (port), (onerror),                 \
-        EVBSC_DEFAULT_BUFFER_SIZE,                                  \
-        EVBSC_DEFAULT_VECTOR_SIZE,                                  \
-        EVBSC_DEFAULT_VECTOR_MIN,                                   \
+#define evbsc_new_w_defaults(host, port, onerror, errorstr)   \
+    ( evbsc_new( (host), (port), (onerror),                   \
+        EVBSC_DEFAULT_BUFFER_SIZE,                            \
+        EVBSC_DEFAULT_VECTOR_SIZE,                            \
+        EVBSC_DEFAULT_VECTOR_MIN,                             \
         (errorstr) ) )
 
 enum _evbsc_error_e_t { EVBSC_ERROR_INTERNAL, EVBSC_ERROR_SOCKET };
@@ -78,8 +76,6 @@ typedef void (*error_callback_p_t)(struct _evbsc *bsc, evbsc_error_t);
 
 struct _evbsc {
     int      fd;
-    ev_io    rw;
-    ev_io    ww;
     char     *host;
     char     *port;
     queue    *cbq;
@@ -87,18 +83,19 @@ struct _evbsc {
     evvector *vec;
     size_t   vec_min;
     error_callback_p_t onerror;
-    struct ev_loop     *loop;
 };
 
 typedef struct _evbsc evbsc;
 
-evbsc *evbsc_new( struct ev_loop *loop, const char *host, const char *port, error_callback_p_t onerror,
+evbsc *evbsc_new( const char *host, const char *port, error_callback_p_t onerror,
                   size_t buf_len, size_t vec_len, size_t vec_min, char **errorstr );
 
 void evbsc_free(evbsc *bsc);
 bool evbsc_connect(evbsc *bsc, char **errorstr);
 void evbsc_disconnect(evbsc *bsc);
 bool evbsc_reconnect(evbsc *bsc, char **errorstr);
+void evbsc_write(evbsc *bsc);
+void evbsc_read(evbsc *bsc);
 
 #ifdef __cplusplus
     }

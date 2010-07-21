@@ -20,9 +20,6 @@
 #include <sockutils.h>
 #include "evbsc.h"
 
-static void write_ready(EV_P_ ev_io *w, int revents);
-static void read_ready(EV_P_ ev_io *w, int revents);
-
 static queue *queue_new(size_t size)
 {
     queue *q;
@@ -50,7 +47,7 @@ static void queue_free(queue *q)
     free(q);
 }
 
-evbsc *evbsc_new( struct ev_loop *loop, const char *host, const char *port, error_callback_p_t onerror,
+evbsc *evbsc_new( const char *host, const char *port, error_callback_p_t onerror,
                   size_t buf_len, size_t vec_len, size_t vec_min, char **errorstr )
 {
     evbsc *bsc = NULL;
@@ -81,7 +78,6 @@ evbsc *evbsc_new( struct ev_loop *loop, const char *host, const char *port, erro
     if ( ( bsc->outq = ioq_new(buf_len) ) == NULL )
         goto ioq_new_err;
 
-    bsc->loop        = loop;
     bsc->vec_min     = vec_min;
     bsc->onerror     = onerror;
 
@@ -122,21 +118,11 @@ bool evbsc_connect(evbsc *bsc, char **errorstr)
     if ( ( bsc->fd = tcp_client(bsc->host, bsc->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
         return false;
 
-    ev_io_init( &(bsc->rw), read_ready,  bsc->fd, EV_READ  );
-    ev_io_init( &(bsc->ww), write_ready, bsc->fd, EV_WRITE );
-    bsc->rw.data = bsc;
-    bsc->ww.data = bsc;
-    ev_io_start(bsc->loop, &(bsc->rw));
-    if (!IOQ_EMPTY(bsc->outq))
-        ev_io_start(bsc->loop, &(bsc->ww));
-
     return true;
 }
 
 void evbsc_disconnect(evbsc *bsc)
 {
-    ev_io_stop(bsc->loop, &(bsc->rw));
-    ev_io_stop(bsc->loop, &(bsc->ww));
     while ( close(bsc->fd) == SOCKERR && errno != EBADF ) ;
 }
 
@@ -161,26 +147,22 @@ static void sock_write_error(void *self)
     }
 }
 
-static void write_ready(EV_P_ ev_io *w, int revents)
+void evbsc_write(evbsc *bsc)
 {
 #ifdef DEBUG
     printf("write ready\n");
 #endif
-    evbsc *bsc = (evbsc *)w->data;
-    ioq_write_nv(bsc->outq, w->fd, sock_write_error, (void *)bsc);
-    if (IOQ_EMPTY(bsc->outq))
-        ev_io_stop(loop, &(bsc->ww));
+    ioq_write_nv(bsc->outq, bsc->fd, sock_write_error, (void *)bsc);
 
     return;
 }
 
-static void read_ready(EV_P_ ev_io *w, int revents)
+void evbsc_read(evbsc *bsc)
 {
 #ifdef DEBUG
     printf("read ready\n");
 #endif
     /* variable declaration / initialization */
-    evbsc    *bsc = (evbsc *)w->data;
     evvector *vec = bsc->vec;
     queue    *buf = bsc->cbq;
     queue_node *node = NULL;
