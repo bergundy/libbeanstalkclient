@@ -1,7 +1,7 @@
 /**
  * =====================================================================================
- * @file   bsc.c
- * @brief  
+ * @file   beanstalkclient.c
+ * @brief  nonblocking implementation of a beanstalk client
  * @date   07/05/2010 07:01:09 PM
  * @author Roey Berman, (royb@walla.net.il), Walla!
  * =====================================================================================
@@ -70,8 +70,8 @@ bsc *bsc_new( const char *host, const char *port, error_callback_p_t onerror,
     if ( ( client->port = strdup(port) ) == NULL )
         goto port_strdup_err;
 
-    if ( ( client->vec = evvector_new(vec_len) ) == NULL )
-        goto evvector_new_err;
+    if ( ( client->vec = ivector_new(vec_len) ) == NULL )
+        goto ivector_new_err;
 
     if ( ( client->cbq = queue_new(buf_len) ) == NULL )
         goto evbuffer_new_err;
@@ -92,8 +92,8 @@ connect_error:
 ioq_new_err:
     queue_free(client->cbq);
 evbuffer_new_err:
-    evvector_free(client->vec);
-evvector_new_err:
+    ivector_free(client->vec);
+ivector_new_err:
     free(client->port);
 port_strdup_err:
     free(client->host);
@@ -110,7 +110,7 @@ void bsc_free(bsc *client)
     free(client->port);
     ioq_free(client->outq);
     queue_free(client->cbq);
-    evvector_free(client->vec);
+    ivector_free(client->vec);
     free(client);
 }
 
@@ -126,6 +126,7 @@ bool bsc_connect(bsc *client, char **errorstr)
         if (client->outq->output_p < client->outq->nodes_begin)
             client->outq->output_p += client->outq->nodes_end - client->outq->nodes_begin + 1;
     }
+    client->vec->som = client->vec->eom = client->vec->data;
 
     return true;
 }
@@ -152,13 +153,13 @@ static void sock_write_error(void *self)
         case EINVAL:
         default:
             /* unexpected socket error - yield client callback */
-            client->onerror(client, EVBSC_ERROR_SOCKET);
+            client->onerror(client, BSC_ERROR_SOCKET);
     }
 }
 
 void bsc_write(bsc *client)
 {
-    ioq_write_nv(client->outq, client->fd, sock_write_error, (void *)bsc);
+    ioq_write_nv(client->outq, client->fd, sock_write_error, (void *)client);
 
     return;
 }
@@ -166,19 +167,19 @@ void bsc_write(bsc *client)
 void bsc_read(bsc *client)
 {
     /* variable declaration / initialization */
-    evvector *vec = client->vec;
+    ivector *vec = client->vec;
     queue    *buf = client->cbq;
     queue_node *node = NULL;
     char    ctmp, *eom  = NULL;
     ssize_t bytes_recv, bytes_processed = 0;
 
     /* expand vector on demand */
-    if (EVVECTOR_FREE(vec) < client->vec_min && !evvector_expand(vec))
+    if (IVECTOR_FREE(vec) < client->vec_min && !ivector_expand(vec))
         /* temporary (out of memory) error, the callback will be rescheduled */
         return;
 
     /* recieve data */
-    if ( ( bytes_recv = recv(client->fd, vec->eom, EVVECTOR_FREE(vec), 0) ) < 1 ) {
+    if ( ( bytes_recv = recv(client->fd, vec->eom, IVECTOR_FREE(vec), 0) ) < 1 ) {
         switch (bytes_recv) {
             case SOCKERR:
                 switch (errno) {
@@ -189,7 +190,7 @@ void bsc_read(bsc *client)
                 }
             default:
                 /* unexpected socket error - reconnect */
-                client->onerror(client, EVBSC_ERROR_SOCKET);
+                client->onerror(client, BSC_ERROR_SOCKET);
                 return;
         }
     }
@@ -198,7 +199,7 @@ void bsc_read(bsc *client)
     while (bytes_processed != bytes_recv) {
         if ( (node = AQUEUE_REAR(buf) ) == NULL ) {
             /* critical error */
-            client->onerror(client, EVBSC_ERROR_INTERNAL);
+            client->onerror(client, BSC_ERROR_INTERNAL);
             return;
         }
         if (node->bytes_expected) {

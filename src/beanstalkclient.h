@@ -1,6 +1,6 @@
 /**
  * =====================================================================================
- * @file   bsc.h
+ * @file   beanstalkclient.h
  * @brief  header file for beanstalkclient - a nonblocking implementation
  * @date   07/05/2010 06:50:22 PM
  * @author Roey Berman, (royb@walla.net.il), Walla!
@@ -18,7 +18,7 @@
 #include <stdbool.h>
 #include <beanstalkproto.h>
 #include <ioqueue.h>
-#include "evvector.h"
+#include "ivector.h"
 
 struct _bsc;
 struct _arrayqueue_node;
@@ -84,7 +84,7 @@ struct _bsc {
     char     *port;
     queue    *cbq;
     ioq      *outq;
-    evvector *vec;
+    ivector *vec;
     size_t   vec_min;
     void     *data;
     error_callback_p_t onerror;

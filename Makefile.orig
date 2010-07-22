@@ -3,8 +3,8 @@ CFLAGS=-Wall -Werror -g
 SRCDIR=src
 TESTDIR=tests
 TEST_FLAGS=-I$(SRCDIR) -lcheck
-LIBS=-lev -lsockutils -lbeanstalkproto -lioqueue
-OBJECTS=beanstalkclient.o evvector.o
+LIBS=-lbeanstalkproto -lioqueue -lsockutils
+OBJECTS=beanstalkclient.o ivector.o
 
 all:     libbeanstalkclient.so
 
@@ -12,7 +12,7 @@ check: $(TESTDIR)/ivector.t $(TESTDIR)/bsc.t
 	$(TESTDIR)/ivector.t  
 	$(TESTDIR)/bsc.t  
 
-$(TESTDIR)/bsc.t: $(TESTDIR)/check_bsc.c evbsc.o
+$(TESTDIR)/bsc.t: $(TESTDIR)/check_bsc.c beanstalkclient.o
 	$(CC) $(TEST_FLAGS) -o $(TESTDIR)/bsc.t $(TESTDIR)/check_bsc.c $(OBJECTS) $(LIBS)
 
 $(TESTDIR)/ivector.t: $(TESTDIR)/check_ivector.c ivector.o

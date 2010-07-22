@@ -1,20 +1,20 @@
 /**
  * =====================================================================================
- * @file   evvector.c
- * @brief  evvector
+ * @file   ivector.c
+ * @brief  ivector - an extendable vector for storing read input
  * @date   07/05/2010 06:23:57 PM
  * @author Roey Berman, (royb@walla.net.il), Walla!
  * =====================================================================================
  */
 
 #include <stdlib.h>
-#include "evvector.h"
+#include "ivector.h"
 
-evvector *evvector_new(size_t init_size)
+ivector *ivector_new(size_t init_size)
 {
-    evvector *vec = NULL;
+    ivector *vec = NULL;
 
-    if ( ( vec = (evvector *)malloc(sizeof(evvector) ) ) == NULL )
+    if ( ( vec = (ivector *)malloc(sizeof(ivector) ) ) == NULL )
         return NULL;
 
     vec->data = NULL;
@@ -30,13 +30,13 @@ evvector *evvector_new(size_t init_size)
     return vec;
 }
 
-void evvector_free(evvector *vec)
+void ivector_free(ivector *vec)
 {
     free(vec->data);
     free(vec);
 }
 
-bool evvector_expand(evvector *vec)
+bool ivector_expand(ivector *vec)
 {
     char *realloc_data = NULL;
 

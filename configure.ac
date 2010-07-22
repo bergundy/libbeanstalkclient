@@ -2,8 +2,8 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.65])
-AC_INIT([libevbeanstalkclient], [0.1], [roey.berman@gmail.com])
-AC_CONFIG_SRCDIR([src/evbsc.h])
+AC_INIT([libbeanstalkclient], [0.2], [roey.berman@gmail.com])
+AC_CONFIG_SRCDIR([src/beanstalkclient.h])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([color-tests foreign -Wall -Werror])
 PKG_CHECK_MODULES([CHECK], [check >= 0.9.4])
@@ -19,11 +19,10 @@ AM_PROG_CC_C_O
 AC_SUBST(LIBTOOL_DEPS)
 
 # Checks for libraries.
-AC_CHECK_LIB([beanstalkclient], [bsc_gen_put_cmd])
+AC_CHECK_LIB([beanstalkproto], [bsp_gen_put_cmd])
 AC_CHECK_LIB([check], [tcase_create])
-AC_CHECK_LIB([ev], [ev_loop])
 AC_CHECK_LIB([ioqueue], [ioq_new])
-AC_CHECK_LIB([sockutils], [tcp_server])
+AC_CHECK_LIB([sockutils], [tcp_client])
 
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h string.h sys/socket.h unistd.h])
