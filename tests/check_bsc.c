@@ -22,6 +22,7 @@ int finished = 0;
 char *exp_data;
 static char spawn_cmd[200];
 static char kill_cmd[200];
+static bsc_error_t bsc_error;
 
 /* generic error handler - fail on error */
 void onerror(bsc *client, bsc_error_t error)
@@ -36,8 +37,9 @@ void onerror(bsc *client, bsc_error_t error)
 void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
 {
     bsp_response_t res;
-    static uint32_t exp_id;
-    static uint32_t res_id, bytes;
+    static uint64_t exp_id;
+    static uint64_t res_id;
+    static uint32_t bytes;
     switch (counter) {
         case 0:
             fail_if(strcmp(data, "USING test\r\n") != 0, "use cmd res");
@@ -67,7 +69,8 @@ void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
         case 9:
         case 13:
             fail_if(strcmp(data, exp_data) != 0, "got invalid data from reserve");
-            BSC_ENQ_CMD(delete, client, small_vec_cb, NULL, cmd_error, res_id );
+            bsc_error = BSC_ENQ_CMD(client, delete, small_vec_cb, NULL, res_id);
+            fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
             break;
         case 10:
         case 14:
@@ -76,8 +79,10 @@ void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
                 fail("bsp_get_delete_res != BSP_DELETE_RES_DELETED");
             else if (counter == 10) {
                 exp_data = "bababuba12341234";
-                BSC_ENQ_CMD(put,     client, small_vec_cb, NULL, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
-                BSC_ENQ_CMD(reserve, client, small_vec_cb, NULL, cmd_error );
+                bsc_error = bsc_put(client, small_vec_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data);
+                fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+                bsc_error = BSC_ENQ_CMD(client, reserve, small_vec_cb, NULL);
+                fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
                 break;
             }
         default:
@@ -85,31 +90,36 @@ void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
     }
     ++counter;
     fail_if( len != strlen(data), "got invalid len argument" );
-
-    return;
-
-cmd_error:
-    fail("error enqueuing command");
 }
 
 START_TEST(test_bsc_small_vec) {
     char *errstr = NULL;
-    client = bsc_new(host, port, onerror, 11, 12, 4, &errstr);
+    client = bsc_new(host, port, onerror, 14, 12, 4, &errstr);
     fail_if( client == NULL, "bsc_new: %s", errstr);
     exp_data = "baba";
     fd_set readset, writeset;
     int i;
 
-    BSC_ENQ_CMD(use,     client, small_vec_cb, NULL, cmd_error, "test");
-    BSC_ENQ_CMD(watch,   client, small_vec_cb, NULL, cmd_error, "test");
-    BSC_ENQ_CMD(ignore,  client, small_vec_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, small_vec_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, small_vec_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, small_vec_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, small_vec_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, NULL, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(put,     client, small_vec_cb, NULL, cmd_error, 1, 0, 10, strlen(exp_data), exp_data);
-    BSC_ENQ_CMD(reserve, client, small_vec_cb, NULL, cmd_error );
+    bsc_error = BSC_ENQ_CMD(client, use,     small_vec_cb, NULL, "test");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, watch,   small_vec_cb, NULL, "test");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  small_vec_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  small_vec_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  small_vec_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  small_vec_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  small_vec_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,  NULL, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = bsc_put(client, small_vec_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data);
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, reserve, small_vec_cb, NULL );
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
@@ -167,10 +177,14 @@ START_TEST(test_bsc_defaults) {
     client = bsc_new_w_defaults(host, port, onerror, &errstr);
     fail_if( client == NULL, "bsc_new: %s", errstr);
 
-    BSC_ENQ_CMD(ignore,  client, NULL, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, NULL, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, NULL, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(ignore,  client, fin_cb, exp_data, cmd_error, "default");
+    bsc_error = BSC_ENQ_CMD(client, ignore, NULL, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore, NULL, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore, NULL, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore, fin_cb, exp_data, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
@@ -203,11 +217,8 @@ START_TEST(test_bsc_defaults) {
         }
     }
 
-    return;
-
-cmd_error:
     bsc_free(client);
-    fail("cmd_error");
+    return;
 }
 END_TEST
 
@@ -230,7 +241,8 @@ static void reconnect(bsc *client, bsc_error_t error)
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
     }
     else if (error == BSC_ERROR_SOCKET) {
-        BSC_ENQ_CMD(put,     client, NULL, NULL, cmd_error, 1, 0, 10, strlen(kill_cmd), kill_cmd);
+        bsc_error = bsc_put(client, NULL, NULL, 1, 0, 10, strlen(kill_cmd), kill_cmd);
+        fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
         if ( bsc_reconnect(client, &errorstr) ) {
             fail_if( IOQ_NODES_USED(client->outq) != 4, 
                 "after reconnect: IOQ_NODES_USED : %d/%d", IOQ_NODES_USED(client->outq), 4);
@@ -261,10 +273,14 @@ START_TEST(test_bsc_reconnect) {
     FD_SET(client->fd, &readset);
     FD_SET(client->fd, &writeset);
 
-    BSC_ENQ_CMD(ignore,   client, reconnect_test_cb, NULL, cmd_error, "default");
-    BSC_ENQ_CMD(reserve,  client, reconnect_test_cb, "1", cmd_error);
-    BSC_ENQ_CMD(reserve,  client, reconnect_test_cb, "1", cmd_error);
-    BSC_ENQ_CMD(reserve,  client, reconnect_test_cb, "1", cmd_error);
+    bsc_error = BSC_ENQ_CMD(client, ignore,   reconnect_test_cb, NULL, "default");
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
+    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
 
     while (!finished) {
         FD_SET(client->fd, &readset);
@@ -293,11 +309,8 @@ START_TEST(test_bsc_reconnect) {
     }
 
     system(kill_cmd);
-    return;
-
-cmd_error:
     bsc_free(client);
-    fail("cmd_error");
+    return;
 }
 END_TEST
 

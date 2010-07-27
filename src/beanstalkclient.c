@@ -21,9 +21,18 @@
 #include <sockutils.h>
 #include "beanstalkclient.h"
 
+#define cb_data_init(cb_data, on_success, on_error, user_data) do {     \
+    cb_data->on_error   = on_error;                                     \
+    cb_data->on_success = on_success;                                   \
+    cb_data->user_data  = user_data;                                    \
+} while (false)
+
+#define CONST_STRLEN(str) (sizeof(str)/sizeof(char)-1)
+
 static queue *queue_new(size_t size)
 {
     queue *q;
+
     if ( ( q = (queue *)malloc(sizeof(queue)) ) == NULL )
         return NULL;
 
@@ -236,6 +245,38 @@ void bsc_read(bsc *client)
 
 in_middle_of_msg:
     vec->eom += bytes_recv - bytes_processed;
+}
+
+bsc_error_t bsc_put(bsc        *client,
+                    bsc_cb_p_t  user_cb,
+                    void       *user_data,
+                    uint32_t    priority,
+                    uint32_t    delay,
+                    uint32_t    ttr,
+                    size_t      bytes,
+                    const char *data)
+{
+    if ( IOQ_NODES_FREE(client->outq) < 3)
+        return BSC_ERROR_QUEUE_FULL;
+
+    if ( ( AQUEUE_FRONT_NV((client)->cbq)->data = bsp_gen_put_hdr(
+        &(AQUEUE_FRONT_NV((client)->cbq)->len), priority, delay, ttr, bytes) ) == NULL )
+        return BSC_ERROR_MEMORY;
+
+    IOQ_PUT_NV( (client)->outq, 
+        AQUEUE_FRONT_NV((client)->cbq)->data, AQUEUE_FRONT_NV((client)->cbq)->len, false );
+
+    IOQ_PUT_NV( (client)->outq, (char *)data, bytes, false );
+
+    IOQ_PUT_NV( (client)->outq, CRLF, CONST_STRLEN(CRLF), false );
+
+    AQUEUE_FRONT_NV((client)->cbq)->cb              = user_cb;
+    AQUEUE_FRONT_NV((client)->cbq)->cb_data         = user_data;
+    AQUEUE_FRONT_NV((client)->cbq)->bytes_expected  = 0;
+    AQUEUE_FRONT_NV((client)->cbq)->is_allocated    = true;
+    AQUEUE_FIN_PUT((client)->cbq);
+
+    return BSC_ERROR_NONE;
 }
 
 #ifdef __cplusplus

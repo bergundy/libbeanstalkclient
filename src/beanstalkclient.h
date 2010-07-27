@@ -23,14 +23,15 @@
 struct _bsc;
 struct _arrayqueue_node;
 
-typedef void (*callback_p_t)(struct _bsc *, struct _arrayqueue_node *, void *, size_t);
+typedef void (*bsc_cb_p_t)(struct _bsc *, struct _arrayqueue_node *, void *, size_t);
 
 struct _arrayqueue_node {
     void   *data;
-    size_t len;
+    int    len;
+    bool   is_allocated;
     size_t bytes_expected;
-    void   *cb_data;
-    callback_p_t cb;
+    void  *cb_data;
+    bsc_cb_p_t cb;
 };
 
 typedef struct _arrayqueue_node queue_node;
@@ -39,26 +40,10 @@ typedef struct _arrayqueue_node queue_node;
 
 typedef struct _arrayqueue queue;
 
-#define BSC_ENQ_CMD(cmd, client, callback, callback_data, on_error, ...) do {  \
-    char   *c = NULL;                                                          \
-    int    c_len;                                                              \
-    if ( ( c = bsp_gen_ ## cmd ## _cmd(&c_len, ## __VA_ARGS__) ) == NULL )     \
-        goto on_error;                                                         \
-    if ( !IOQ_PUT( (client)->outq, c, c_len, 0 ) )       {                     \
-        free(c);                                                               \
-        goto on_error;                                                         \
-    }                                                                          \
-    AQUEUE_FRONT_NV((client)->cbq)->data    = (c);                             \
-    AQUEUE_FRONT_NV((client)->cbq)->len     = (c_len);                         \
-    AQUEUE_FRONT_NV((client)->cbq)->cb      = (callback);                      \
-    AQUEUE_FRONT_NV((client)->cbq)->cb_data = (callback_data);                 \
-    AQUEUE_FRONT_NV((client)->cbq)->bytes_expected = 0;                        \
-    AQUEUE_FIN_PUT((client)->cbq);                                             \
-} while (false)
-
-#define QUEUE_FIN_CMD(q) do {      \
-    free(AQUEUE_REAR_NV(q)->data); \
-    AQUEUE_FIN_GET(q);             \
+#define QUEUE_FIN_CMD(q) do {            \
+    if (AQUEUE_REAR_NV(q)->is_allocated) \
+        free(AQUEUE_REAR_NV(q)->data);   \
+    AQUEUE_FIN_GET(q);                   \
 } while (false)
 
 #define BSC_DEFAULT_BUFFER_SIZE 1024
@@ -72,7 +57,21 @@ typedef struct _arrayqueue queue;
         BSC_DEFAULT_VECTOR_MIN,                             \
         (errorstr) ) )
 
-enum _bsc_error_e_t { BSC_ERROR_INTERNAL, BSC_ERROR_SOCKET };
+#define BSC_ENQ_CMD(client, cmd, user_cb, user_data, ...) (                             \
+    IOQ_FULL((client)->outq) ? BSC_ERROR_QUEUE_FULL :                                   \
+    ( ( AQUEUE_FRONT_NV((client)->cbq)->data                                            \
+        = bsp_gen_ ## cmd ## _cmd( &(AQUEUE_FRONT_NV((client)->cbq)->len),              \
+            &(AQUEUE_FRONT_NV((client)->cbq)->is_allocated), ## __VA_ARGS__) ) == NULL  \
+        ? BSC_ERROR_MEMORY                                                              \
+        : ( IOQ_PUT_NV( (client)->outq, AQUEUE_FRONT_NV((client)->cbq)->data,           \
+                    AQUEUE_FRONT_NV((client)->cbq)->len, false ),                       \
+              AQUEUE_FRONT_NV((client)->cbq)->cb                  = user_cb,            \
+              AQUEUE_FRONT_NV((client)->cbq)->cb_data             = user_data,          \
+              AQUEUE_FRONT_NV((client)->cbq)->bytes_expected = 0,                       \
+              AQUEUE_FIN_PUT((client)->cbq),                                            \
+              BSC_ERROR_NONE ) ) )
+
+enum _bsc_error_e_t { BSC_ERROR_NONE, BSC_ERROR_INTERNAL, BSC_ERROR_SOCKET, BSC_ERROR_MEMORY, BSC_ERROR_QUEUE_FULL };
 
 typedef enum _bsc_error_e_t bsc_error_t;
 
@@ -101,6 +100,30 @@ void bsc_disconnect(bsc *client);
 bool bsc_reconnect(bsc *client, char **errorstr);
 void bsc_write(bsc *client);
 void bsc_read(bsc *client);
+
+/** 
+* puts a job into the beanstalk server.
+* data will NOT be freed after write!
+* 
+* @param client          bsc instance
+* @param user_cb         callback on response
+* @param user_data       custom data associated with callbacks
+* @param priority        job priority
+* @param delay           job delay start
+* @param ttr             job time to run
+* @param bytes           job length
+* @param data            job data
+* 
+* @return            the error
+*/
+bsc_error_t bsc_put(bsc        *client,
+                    bsc_cb_p_t  user_cb,
+                    void       *user_data,
+                    uint32_t    priority,
+                    uint32_t    delay,
+                    uint32_t    ttr,
+                    size_t      bytes,
+                    const char *data);
 
 #ifdef __cplusplus
     }
