@@ -1,0 +1,21 @@
+libbeanstalkclient.
+
+This is a non blocking implementation of a beanstalk client.
+It is ment to be embeded in event loops like libevent/libev.
+
+This library is still under development!!
+
+Dependencies:
+
+arrayqueue.h: http://github.com/bergundy/arrayqueue
+ioqueue library: http://github.com/bergundy/IOQueue
+libbeanstalkproto (The protocol implementation): http://github.com/bergundy/libbeanstalkproto
+sockutils (a simple socket library i wrote to avoid rewriting socket code): http://github.com/bergundy/sockutils
+
+To enable tests you will need check (http://check.sourceforge.net/)
+
+TODO:
+
+1. Create a function for each beanstalk command to replace the BSC_ENQ_CMD macro.
+2. Create a list/hash of watched/used tubes so when the client reconnects it will restore it's old state.
+3. Deal with multiple beanstalkd servers. 

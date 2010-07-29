@@ -33,13 +33,50 @@ void onerror(bsc *client, bsc_error_t error)
 /*****************************************************************************************************************/ 
 /*                                                      test 1                                                   */
 /*****************************************************************************************************************/ 
+void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len);
+void put_cb(bsc *client, struct bsc_put_info *info);
+void reserve_cb(bsc *client, struct bsc_reserve_info *info);
+void delete_cb(bsc *client, struct bsc_delete_info *info);
+
+void put_cb(bsc *client, struct bsc_put_info *info)
+{
+    ++counter;
+    fail_if(info->response.code != BSP_PUT_RES_INSERTED, "put_cb: info->code != BSP_PUT_RES_INSERTED");
+}
+
+void reserve_cb(bsc *client, struct bsc_reserve_info *info)
+{
+    ++counter;
+    fail_if(info->response.code != BSP_RESERVE_RES_RESERVED,
+        "bsp_reserve: response.code != BSP_RESERVE_RES_RESERVED");
+    fail_if(info->response.bytes != strlen(exp_data),
+        "bsp_reserve: response.bytes != exp_bytes");
+    fail_if(strcmp(info->response.data, exp_data) != 0,
+        "bsp_reserve: got invalid data");
+
+    fail_if((bsc_error = bsc_delete(client, delete_cb, NULL, info->response.id)),
+        "bsc_delete failed (%d)", bsc_error);
+}
+
+void delete_cb(bsc *client, struct bsc_delete_info *info)
+{
+    fail_if( info->response.code != BSP_DELETE_RES_DELETED,
+        "bsp_delete: response.code != BSP_DELETE_RES_DELETED");
+
+    if (++counter == 10) {
+        exp_data = "bababuba12341234";
+        fail_if((bsc_error = bsc_put(client, put_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data, false)),
+            "BSC_ENQ_CMD failed (%d)", bsc_error);
+        fail_if((bsc_error = bsc_reserve(client, reserve_cb, NULL, -1)),
+            "bsc_reserve failed (%d)", bsc_error);
+    }
+    else
+        ++finished;
+}
 
 void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
 {
     bsp_response_t res;
-    static uint64_t exp_id;
-    static uint64_t res_id;
-    static uint32_t bytes;
     switch (counter) {
         case 0:
             fail_if(strcmp(data, "USING test\r\n") != 0, "use cmd res");
@@ -54,39 +91,6 @@ void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len)
         case 6:
             fail_if(strcmp(data, "WATCHING 1\r\n") != 0, "watch cmd res");
             break;
-        case 7:
-        case 11:
-            res = bsp_get_put_res(data, &exp_id);
-            fail_if(res != BSP_PUT_RES_INSERTED, "bsp_get_put_res != BSP_PUT_RES_INSERTED");
-            break;
-        case 8:
-        case 12:
-            res = bsp_get_reserve_res(data, &res_id, &bytes);
-            if (res != BSP_RESERVE_RES_RESERVED || bytes != strlen(exp_data))
-                fail("bsp_get_reserve_res != BSP_RESERVE_RES_RESERVED || bytes != exp_bytes");
-            node->bytes_expected = bytes;
-            break;
-        case 9:
-        case 13:
-            fail_if(strcmp(data, exp_data) != 0, "got invalid data from reserve");
-            bsc_error = BSC_ENQ_CMD(client, delete, small_vec_cb, NULL, res_id);
-            fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-            break;
-        case 10:
-        case 14:
-            res = bsp_get_delete_res(data);
-            if ( res != BSP_DELETE_RES_DELETED )
-                fail("bsp_get_delete_res != BSP_DELETE_RES_DELETED");
-            else if (counter == 10) {
-                exp_data = "bababuba12341234";
-                bsc_error = bsc_put(client, small_vec_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data);
-                fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-                bsc_error = BSC_ENQ_CMD(client, reserve, small_vec_cb, NULL);
-                fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-                break;
-            }
-        default:
-            ++finished;
     }
     ++counter;
     fail_if( len != strlen(data), "got invalid len argument" );
@@ -116,10 +120,10 @@ START_TEST(test_bsc_small_vec) {
     fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
     bsc_error = BSC_ENQ_CMD(client, ignore,  NULL, NULL, "default");
     fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-    bsc_error = bsc_put(client, small_vec_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data);
-    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-    bsc_error = BSC_ENQ_CMD(client, reserve, small_vec_cb, NULL );
-    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = bsc_put(client, put_cb, NULL, 1, 0, 10, strlen(exp_data), exp_data, false);
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_put failed (%d)", bsc_error);
+    bsc_error = bsc_reserve(client, reserve_cb, NULL, -1);
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
@@ -127,7 +131,7 @@ START_TEST(test_bsc_small_vec) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (IOQ_EMPTY(client->outq)) {
+        if (AQUEUE_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
@@ -164,7 +168,7 @@ END_TEST
 
 void fin_cb(bsc *client, queue_node *node, void *data, size_t len)
 {
-    if (strcmp(node->cb_data, exp_data) != 0)
+    if (strcmp(node->cb_data->user_data, exp_data) != 0)
         fail("got invalid data");
     ++finished;
 }
@@ -194,7 +198,7 @@ START_TEST(test_bsc_defaults) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (IOQ_EMPTY(client->outq)) {
+        if (AQUEUE_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
@@ -241,22 +245,15 @@ static void reconnect(bsc *client, bsc_error_t error)
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
     }
     else if (error == BSC_ERROR_SOCKET) {
-        bsc_error = bsc_put(client, NULL, NULL, 1, 0, 10, strlen(kill_cmd), kill_cmd);
-        fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
         if ( bsc_reconnect(client, &errorstr) ) {
-            fail_if( IOQ_NODES_USED(client->outq) != 4, 
-                "after reconnect: IOQ_NODES_USED : %d/%d", IOQ_NODES_USED(client->outq), 4);
+            fail_if( client->outq->used != 9, 
+                "after reconnect: nodes_used : %d/%d", client->outq->used, 9);
 
             finished++;
             return;
         }
     }
     fail("critical error: maxed out reconnect attempts, quitting\n");
-    return;
-
-cmd_error:
-    bsc_free(client);
-    fail("cmd_error");
 }
 
 START_TEST(test_bsc_reconnect) {
@@ -265,7 +262,7 @@ START_TEST(test_bsc_reconnect) {
     sprintf(spawn_cmd, "beanstalkd -p %s -d", reconnect_test_port);
     sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
     system(spawn_cmd);
-    client = bsc_new( host, reconnect_test_port, reconnect, 5, 12, 4, &errstr);
+    client = bsc_new( host, reconnect_test_port, reconnect, 10, 12, 4, &errstr);
     fail_if( client == NULL, "bsc_new: %s", errstr);
 
     FD_ZERO(&readset);
@@ -273,19 +270,24 @@ START_TEST(test_bsc_reconnect) {
     FD_SET(client->fd, &readset);
     FD_SET(client->fd, &writeset);
 
-    bsc_error = BSC_ENQ_CMD(client, ignore,   reconnect_test_cb, NULL, "default");
+    bsc_error = BSC_ENQ_CMD(client, ignore, reconnect_test_cb, NULL, "default");
     fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
-    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
-    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
-    bsc_error = BSC_ENQ_CMD(client, reserve,  reconnect_test_cb, "1" );
-    fail_if(bsc_error != BSC_ERROR_NONE, "BSC_ENQ_CMD failed (%d)", bsc_error);
+    bsc_error = bsc_reserve(client, NULL, NULL, -1);
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
+    bsc_error = bsc_reserve(client, NULL, NULL, -1);
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
+    bsc_error = bsc_reserve(client, NULL, NULL, -1);
+    fail_if(bsc_error = bsc_put(client, NULL, NULL, 1, 0, 10, strlen(kill_cmd), kill_cmd, false) != BSC_ERROR_NONE, 
+        "bsc_put failed (%d)", bsc_error);
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
+    fail_if(bsc_error = bsc_put(client, NULL, NULL, 1, 0, 10, strlen(kill_cmd), kill_cmd, false) != BSC_ERROR_NONE, 
+        "bsc_put failed (%d)", bsc_error);
+
 
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (IOQ_EMPTY(client->outq)) {
+        if (AQUEUE_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
