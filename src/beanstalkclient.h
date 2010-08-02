@@ -31,6 +31,7 @@ struct bsc_bury_info;
 struct bsc_touch_info;
 struct bsc_watch_info;
 struct bsc_ignore_info;
+struct bsc_peek_info;
 
 typedef void (*bsc_put_user_cb)(struct _bsc *, struct bsc_put_info *);
 
@@ -164,6 +165,25 @@ struct bsc_ignore_info {
     } response;
 };
 
+typedef void (*bsc_peek_user_cb)(struct _bsc *, struct bsc_peek_info *);
+
+struct bsc_peek_info {
+    void *user_data;
+    bsc_peek_user_cb user_cb;
+    struct {
+        enum peek_cmd_e {
+            ID, READY, DELAYED, BURIED
+        } peek_type;
+        uint64_t id;
+    } request;
+    struct {
+        bsp_response_t code;
+        uint64_t       id;
+        size_t         bytes;
+        void          *data;
+    } response;
+};
+
 union bsc_cmd_info {
     struct bsc_put_info     put_info;
     struct bsc_use_info     use_info;
@@ -174,6 +194,7 @@ union bsc_cmd_info {
     struct bsc_touch_info   touch_info;
     struct bsc_watch_info   watch_info;
     struct bsc_ignore_info  ignore_info;
+    struct bsc_peek_info    peek_info;
 };
 
 typedef void (*bsc_cb_p_t)(struct _bsc *, struct _cbq_node *, void *, size_t);
@@ -410,6 +431,23 @@ bsc_error_t bsc_ignore(bsc                *client,
                        bsc_ignore_user_cb  user_cb,
                        void               *user_data,
                        const char         *tube);
+
+/** 
+* inspect a job in the system.
+* 
+* @param client     bsc instance
+* @param user_cb    callback on response
+* @param user_data  custom data associated with the callback
+* @param peek_type  the type of peek command to issue
+* @param id         if peek type is ID refers the issued command will refer to this id
+* 
+* @return           the error code
+*/
+bsc_error_t bsc_peek(bsc                *client,
+                     bsc_peek_user_cb    user_cb,
+                     void               *user_data,
+                     enum peek_cmd_e     peek_type,
+                     uint64_t            id);
 
 #ifdef __cplusplus
     }

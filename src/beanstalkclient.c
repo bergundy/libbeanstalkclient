@@ -58,6 +58,7 @@ GENERIC_RES_FUNC(bury)
 GENERIC_RES_FUNC(touch)
 static void got_watch_res(bsc *client, queue_node *node, void *data, size_t len);
 static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len);
+static void got_peek_res(bsc *client, queue_node *node, void *data, size_t len);
 
 static queue *queue_new(size_t size)
 {
@@ -687,6 +688,57 @@ static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len
     if (ignore_info->user_cb != NULL)
         ignore_info->user_cb(client, ignore_info);
 }
+
+bsc_error_t bsc_peek(bsc                *client,
+                     bsc_peek_user_cb    user_cb,
+                     void               *user_data,
+                     enum peek_cmd_e     peek_type,
+                     uint64_t            id)
+{
+    bsc_error_t error;
+
+    switch (peek_type) {
+        case ID:
+            if ( ( error = ENQ_CMD(client, peek, got_peek_res, id) ) != BSC_ERROR_NONE )
+                return error;
+        case READY:
+            if ( ( error = ENQ_CMD(client, peek_ready, got_peek_res) ) != BSC_ERROR_NONE )
+                return error;
+        case DELAYED:
+            if ( ( error = ENQ_CMD(client, peek_delayed, got_peek_res) ) != BSC_ERROR_NONE )
+                return error;
+        case BURIED:
+            if ( ( error = ENQ_CMD(client, peek_buried, got_peek_res) ) != BSC_ERROR_NONE )
+                return error;
+    }
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->peek_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->peek_info.user_cb           = user_cb;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->peek_info.request.peek_type = peek_type;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->peek_info.request.id        = id;
+    QUEUE_FIN_PUT(client);
+    return BSC_ERROR_NONE;
+}
+
+static void got_peek_res(bsc *client, queue_node *node, void *data, size_t len)
+{
+    struct bsc_peek_info *peek_info = &(node->cb_data->peek_info);
+
+    if (node->bytes_expected) {
+        peek_info->response.data = data;
+        if (peek_info->user_cb != NULL)
+            peek_info->user_cb(client, peek_info);
+    }
+    else {
+        peek_info->response.code = bsp_get_peek_res(data, &(peek_info->response.id), &(peek_info->response.bytes));
+        if (peek_info->response.code == BSP_PEEK_RES_FOUND)
+            node->bytes_expected = peek_info->response.bytes;
+        else {
+            if (peek_info->user_cb != NULL)
+                peek_info->user_cb(client, peek_info);
+        }
+    }
+}
+
 
 static bool insert_tube_after(const char *name, struct bsc_tube_list *next)
 {
