@@ -165,15 +165,17 @@ struct bsc_ignore_info {
     } response;
 };
 
+enum peek_cmd_e {
+    ID, READY, DELAYED, BURIED
+} peek_type;
+
 typedef void (*bsc_peek_user_cb)(struct _bsc *, struct bsc_peek_info *);
 
 struct bsc_peek_info {
     void *user_data;
     bsc_peek_user_cb user_cb;
     struct {
-        enum peek_cmd_e {
-            ID, READY, DELAYED, BURIED
-        } peek_type;
+        enum peek_cmd_e peek_type;
         uint64_t id;
     } request;
     struct {
@@ -197,7 +199,7 @@ union bsc_cmd_info {
     struct bsc_peek_info    peek_info;
 };
 
-typedef void (*bsc_cb_p_t)(struct _bsc *, struct _cbq_node *, void *, size_t);
+typedef void (*bsc_cb_p_t)(struct _bsc *, struct _cbq_node *, const char *, size_t);
 
 struct _cbq_node {
     void  *data;
@@ -244,7 +246,7 @@ enum _bsc_error_e_t { BSC_ERROR_NONE, BSC_ERROR_INTERNAL, BSC_ERROR_SOCKET, BSC_
 typedef enum _bsc_error_e_t bsc_error_t;
 
 typedef void (*error_callback_p_t)(struct _bsc *, bsc_error_t);
-typedef void (*bsc_buffer_fill_cb)(struct _bsc *);
+typedef int (*bsc_buffer_fill_cb)(struct _bsc *);
 
 struct bsc_tube_list {
     char   *name;

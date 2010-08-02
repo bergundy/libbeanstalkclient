@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sockutils.h>
+#include <beanstalkproto.h>
 #include "beanstalkclient.h"
 
 #define CONST_STRLEN(str) (sizeof(str)/sizeof(char)-1)
@@ -39,26 +40,26 @@
 #define ENQ_CMD(client, cmd, u_cb, ...) ENQ_CMD_(client, bsp_gen_ ## cmd ## _cmd, 1, u_cb, ## __VA_ARGS__)
 
 #define GENERIC_RES_FUNC(cmd_type) \
-static void got_ ## cmd_type ## _res(bsc *client, queue_node *node, void *data, size_t len)    \
-{                                                                                              \
-    if (node->cb_data->cmd_type ## _info.user_cb != NULL) {                                    \
-        node->cb_data->cmd_type ## _info.response.code = bsp_get_ ## cmd_type ## _res(data);   \
-        node->cb_data->cmd_type ## _info.user_cb(client, &(node->cb_data->cmd_type ## _info)); \
-    }                                                                                          \
+static void got_ ## cmd_type ## _res(bsc *client, queue_node *node, const char *data, size_t len)   \
+{                                                                                                   \
+    if (node->cb_data->cmd_type ## _info.user_cb != NULL) {                                         \
+        node->cb_data->cmd_type ## _info.response.code = bsp_get_ ## cmd_type ## _res(data);        \
+        node->cb_data->cmd_type ## _info.user_cb(client, &(node->cb_data->cmd_type ## _info));      \
+    }                                                                                               \
 }
 
 static bool insert_tube_after(const char *name, struct bsc_tube_list *next);
 
-static void got_put_res(bsc *client, queue_node *node, void *data, size_t len);
-static void got_use_res(bsc *client, queue_node *node, void *data, size_t len);
-static void got_reserve_res(bsc *client, queue_node *node, void *data, size_t len);
+static void got_put_res(bsc *client, queue_node *node, const char *data, size_t len);
+static void got_use_res(bsc *client, queue_node *node, const char *data, size_t len);
+static void got_reserve_res(bsc *client, queue_node *node, const char *data, size_t len);
 GENERIC_RES_FUNC(delete)
 GENERIC_RES_FUNC(release)
 GENERIC_RES_FUNC(bury)
 GENERIC_RES_FUNC(touch)
-static void got_watch_res(bsc *client, queue_node *node, void *data, size_t len);
-static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len);
-static void got_peek_res(bsc *client, queue_node *node, void *data, size_t len);
+static void got_watch_res(bsc *client, queue_node *node, const char *data, size_t len);
+static void got_ignore_res(bsc *client, queue_node *node, const char *data, size_t len);
+static void got_peek_res(bsc *client, queue_node *node, const char *data, size_t len);
 
 static queue *queue_new(size_t size)
 {
@@ -405,7 +406,7 @@ bsc_error_t bsc_put(bsc            *client,
         return error;
 
     IOQ_PUT_NV( (client)->outq, (char *)data, bytes, false );
-    IOQ_PUT_NV( (client)->outq, CRLF, CONST_STRLEN(CRLF), false );
+    IOQ_PUT_NV( (client)->outq, (char *)CRLF, CONST_STRLEN(CRLF), false );
 
     AQUEUE_FRONT_NV((client)->cbq)->cb_data->put_info.user_data         = user_data;
     AQUEUE_FRONT_NV((client)->cbq)->cb_data->put_info.user_cb           = user_cb;
@@ -421,7 +422,7 @@ bsc_error_t bsc_put(bsc            *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_put_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_put_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_put_info *put_info = &(node->cb_data->put_info);
 
@@ -453,7 +454,7 @@ bsc_error_t bsc_use(bsc                *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_use_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_use_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_use_info *use_info = &(node->cb_data->use_info);
 
@@ -492,12 +493,12 @@ bsc_error_t bsc_reserve(bsc                *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_reserve_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_reserve_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_reserve_info *reserve_info = &(node->cb_data->reserve_info);
 
     if (node->bytes_expected) {
-        reserve_info->response.data = data;
+        reserve_info->response.data = (void *)data;
         if (reserve_info->user_cb != NULL)
             reserve_info->user_cb(client, reserve_info);
     }
@@ -513,7 +514,7 @@ static void got_reserve_res(bsc *client, queue_node *node, void *data, size_t le
 }
 
 bsc_error_t bsc_delete(bsc                *client,
-                       bsc_delete_user_cb user_cb,
+                       bsc_delete_user_cb  user_cb,
                        void               *user_data,
                        uint64_t            id)
 {
@@ -604,7 +605,7 @@ bsc_error_t bsc_watch(bsc                *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_watch_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_watch_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_watch_info *watch_info = &(node->cb_data->watch_info);
     struct bsc_tube_list *p = client->watched_tubes;
@@ -653,7 +654,7 @@ bsc_error_t bsc_ignore(bsc                *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_ignore_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_ignore_info *ignore_info = &(node->cb_data->ignore_info);
     struct bsc_tube_list *p = client->watched_tubes, *prev = NULL;
@@ -719,12 +720,12 @@ bsc_error_t bsc_peek(bsc                *client,
     return BSC_ERROR_NONE;
 }
 
-static void got_peek_res(bsc *client, queue_node *node, void *data, size_t len)
+static void got_peek_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_peek_info *peek_info = &(node->cb_data->peek_info);
 
     if (node->bytes_expected) {
-        peek_info->response.data = data;
+        peek_info->response.data = (void *)data;
         if (peek_info->user_cb != NULL)
             peek_info->user_cb(client, peek_info);
     }
@@ -742,14 +743,14 @@ static void got_peek_res(bsc *client, queue_node *node, void *data, size_t len)
 
 static bool insert_tube_after(const char *name, struct bsc_tube_list *next)
 {
-    struct bsc_tube_list *new = NULL;
+    struct bsc_tube_list *newl = NULL;
 
-    if ( ( new = (struct bsc_tube_list *)malloc(sizeof(struct bsc_tube_list)) ) == NULL )
+    if ( ( newl = (struct bsc_tube_list *)malloc(sizeof(struct bsc_tube_list)) ) == NULL )
         return false;
     else {
-        new->name  = strdup(name);
-        new->next  = next->next;
-        next->next = new;
+        newl->name  = strdup(name);
+        newl->next  = next->next;
+        next->next = newl;
         return true;
     }
 }
