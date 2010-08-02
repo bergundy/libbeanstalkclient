@@ -2,7 +2,7 @@ CC=gcc
 CFLAGS=-Wall -Werror -g
 SRCDIR=src
 TESTDIR=tests
-TEST_FLAGS=-I$(SRCDIR) -lcheck
+TEST_FLAGS=-Wall -g -I$(SRCDIR) -lcheck
 LIBS=-lbeanstalkproto -lioqueue -lsockutils
 OBJECTS=beanstalkclient.o ivector.o
 

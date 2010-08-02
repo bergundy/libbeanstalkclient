@@ -23,24 +23,41 @@
 
 #define CONST_STRLEN(str) (sizeof(str)/sizeof(char)-1)
 
-#define ENQ_CMD_(client, gen_cmd, nodes, u_cb, ...) (                                           \
-    AQUEUE_NODES_FREE((client)->outq) - (client)->outq_offset < (nodes) ? BSC_ERROR_QUEUE_FULL  \
-    : ( ( AQUEUE_FRONT_NV((client)->cbq)->data                                                  \
-        = gen_cmd( &(AQUEUE_FRONT_NV((client)->cbq)->len),                                      \
-            &(AQUEUE_FRONT_NV((client)->cbq)->is_allocated), ## __VA_ARGS__) ) == NULL          \
-        ? BSC_ERROR_MEMORY                                                                      \
-        : ( IOQ_PUT_NV( (client)->outq, AQUEUE_FRONT_NV((client)->cbq)->data,                   \
-                    AQUEUE_FRONT_NV((client)->cbq)->len, false ),                               \
-              AQUEUE_FRONT_NV((client)->cbq)->cb             = u_cb,                            \
-              AQUEUE_FRONT_NV((client)->cbq)->bytes_expected = 0,                               \
-              AQUEUE_FRONT_NV((client)->cbq)->outq_offset    = (nodes) - 1,                     \
+#define ENQ_CMD_(client, gen_cmd, nodes, u_cb, ...) (                                             \
+    BSC_BUFFER_NODES_FREE(client) < (nodes) ? BSC_ERROR_QUEUE_FULL                                \
+    : ( ( AQUEUE_FRONT_NV((client)->cbq)->data                                                    \
+        = gen_cmd( &(AQUEUE_FRONT_NV((client)->cbq)->len),                                        \
+            &(AQUEUE_FRONT_NV((client)->cbq)->is_allocated), ## __VA_ARGS__) ) == NULL            \
+        ? BSC_ERROR_MEMORY                                                                        \
+        : ( IOQ_PUT_NV( (client)->outq, AQUEUE_FRONT_NV((client)->cbq)->data,                     \
+                    AQUEUE_FRONT_NV((client)->cbq)->len, false ),                                 \
+              AQUEUE_FRONT_NV((client)->cbq)->cb             = u_cb,                              \
+              AQUEUE_FRONT_NV((client)->cbq)->bytes_expected = 0,                                 \
+              AQUEUE_FRONT_NV((client)->cbq)->outq_offset    = (nodes) - 1,                       \
               BSC_ERROR_NONE ) ) )
 
 #define ENQ_CMD(client, cmd, u_cb, ...) ENQ_CMD_(client, bsp_gen_ ## cmd ## _cmd, 1, u_cb, ## __VA_ARGS__)
 
+#define GENERIC_RES_FUNC(cmd_type) \
+static void got_ ## cmd_type ## _res(bsc *client, queue_node *node, void *data, size_t len)    \
+{                                                                                              \
+    if (node->cb_data->cmd_type ## _info.user_cb != NULL) {                                    \
+        node->cb_data->cmd_type ## _info.response.code = bsp_get_ ## cmd_type ## _res(data);   \
+        node->cb_data->cmd_type ## _info.user_cb(client, &(node->cb_data->cmd_type ## _info)); \
+    }                                                                                          \
+}
+
+static bool insert_tube_after(const char *name, struct bsc_tube_list *next);
+
 static void got_put_res(bsc *client, queue_node *node, void *data, size_t len);
+static void got_use_res(bsc *client, queue_node *node, void *data, size_t len);
 static void got_reserve_res(bsc *client, queue_node *node, void *data, size_t len);
-static void got_delete_res(bsc *client, queue_node *node, void *data, size_t len);
+GENERIC_RES_FUNC(delete)
+GENERIC_RES_FUNC(release)
+GENERIC_RES_FUNC(bury)
+GENERIC_RES_FUNC(touch)
+static void got_watch_res(bsc *client, queue_node *node, void *data, size_t len);
+static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len);
 
 static queue *queue_new(size_t size)
 {
@@ -81,8 +98,9 @@ static void queue_free(queue *q)
     free(q);
 }
 
-bsc *bsc_new( const char *host, const char *port, error_callback_p_t onerror,
-                  size_t buf_len, size_t vec_len, size_t vec_min, char **errorstr )
+bsc *bsc_new(const char *host, const char *port, const char *default_tube,
+             error_callback_p_t onerror, size_t buf_len,
+             size_t vec_len, size_t vec_min, char **errorstr)
 {
     bsc *client = NULL;
 
@@ -92,10 +110,13 @@ bsc *bsc_new( const char *host, const char *port, error_callback_p_t onerror,
     if ( ( client = (bsc *)malloc(sizeof(bsc) ) ) == NULL )
         return NULL;
 
+    client->buffer_fill_cb = NULL;
     client->host = client->port = NULL;
     client->vec = NULL;
-    client->cbq = NULL;
-    client->outq = NULL;
+    client->tubecbq = client->cbq = NULL;
+    client->tubeq = client->outq = NULL;
+    client->default_tube = NULL;
+    client->watched_tubes = NULL;
 
     if ( ( client->host = strdup(host) ) == NULL )
         goto host_strdup_err;
@@ -112,16 +133,34 @@ bsc *bsc_new( const char *host, const char *port, error_callback_p_t onerror,
     if ( ( client->outq = ioq_new(buf_len) ) == NULL )
         goto ioq_new_err;
 
+    if ( ( client->default_tube = strdup(default_tube) ) == NULL )
+        goto tube_dup_default_err;
+
+    if ( ( client->watched_tubes = (struct bsc_tube_list *)malloc(sizeof(struct bsc_tube_list)) ) == NULL )
+        goto tube_list_malloc_err;
+
+    if ( ( client->watched_tubes->name = strdup(default_tube) ) == NULL )
+        goto tube_dup_list_err;
+
+    client->watched_tubes->next = NULL;
+
     client->vec_min     = vec_min;
     client->onerror     = onerror;
     client->outq_offset = 0;
+    client->watched_tubes_count = 1;
 
     if ( !bsc_connect(client, errorstr) )
-        goto connect_error;
+        goto connect_err;
 
     return client;
 
-connect_error:
+connect_err:
+    free(client->watched_tubes->name);
+tube_dup_list_err:
+    free(client->watched_tubes);
+tube_list_malloc_err:
+    free(client->default_tube);
+tube_dup_default_err:
     ioq_free(client->outq);
 ioq_new_err:
     queue_free(client->cbq);
@@ -140,6 +179,16 @@ host_strdup_err:
 
 void bsc_free(bsc *client)
 {
+    struct bsc_tube_list *p1 = client->watched_tubes, *p2 = NULL;
+
+    do {
+        p2 = p1->next;
+        free(p1->name);
+        free(p1);
+        p1 = p2;
+    } while (p1 != NULL);
+
+    free(client->default_tube);
     free(client->host);
     free(client->port);
     ioq_free(client->outq);
@@ -151,6 +200,11 @@ void bsc_free(bsc *client)
 bool bsc_connect(bsc *client, char **errorstr)
 {
     ptrdiff_t queue_diff;
+    bool      check_default    = true, ignore_default = true;
+    struct    bsc_tube_list *p = NULL;
+    ioq      *tmpq             = NULL;
+    queue    *tmpcbq           = NULL;
+    int       cmp_res;
 
     if ( ( client->fd = tcp_client(client->host, client->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
         return false;
@@ -163,7 +217,46 @@ bool bsc_connect(bsc *client, char **errorstr)
     }
     client->vec->som = client->vec->eom = client->vec->data;
 
+    if (client->tubeq != NULL)
+        ioq_free(client->tubeq);
+    tmpq = client->outq;
+    if ( ( client->outq = ioq_new(client->watched_tubes_count + 2) ) == NULL )
+        goto out_of_memory;
+
+    if (client->tubecbq != NULL)
+        queue_free(client->tubecbq);
+    tmpcbq = client->cbq;
+    if ( ( client->cbq = queue_new(client->watched_tubes_count + 2) ) == NULL )
+        goto out_of_memory;
+
+    if ( ( strcmp(client->default_tube, BSC_DEFAULT_TUBE) ) != 0 )
+        if ( bsc_use(client, NULL, NULL, client->default_tube) != BSC_ERROR_NONE )
+            goto out_of_memory;
+
+    for (p = client->watched_tubes; p != NULL; p = p->next) {
+        if ( check_default && ( cmp_res = strcmp(p->name, BSC_DEFAULT_TUBE) ) >= 0 ) {
+            check_default = false;
+            if (cmp_res == 0)
+                ignore_default = false;
+        }
+        else if ( bsc_watch(client, NULL, NULL, p->name) != BSC_ERROR_NONE )
+            goto out_of_memory;
+    }
+
+    if (ignore_default && bsc_ignore(client, NULL, NULL, BSC_DEFAULT_TUBE) != BSC_ERROR_NONE)
+        goto out_of_memory;
+
+    client->tubeq = client->outq;
+    client->outq = tmpq;
+    client->tubecbq = client->cbq;
+    client->cbq = tmpcbq;
+
     return true;
+
+out_of_memory:
+    if (errorstr != NULL)
+        *errorstr = strdup("out of memory");
+    return false; 
 }
 
 void bsc_disconnect(bsc *client)
@@ -181,7 +274,16 @@ void bsc_write(bsc *client)
 {
     queue_node *node = NULL;
     size_t  i;
-    ssize_t nodes_written = ioq_write_nv(client->outq, client->fd);
+    ssize_t nodes_written;
+    if (client->tubeq != NULL) {
+        nodes_written = ioq_write_nv(client->tubeq, client->fd);
+        if (AQUEUE_EMPTY(client->tubeq)) {
+            ioq_free(client->tubeq);
+            client->tubeq = NULL;
+        }
+    }
+    else
+        nodes_written = ioq_write_nv(client->outq, client->fd);
 
     if (nodes_written < 0)
         switch (errno) {
@@ -235,6 +337,16 @@ void bsc_read(bsc *client)
 
     //printf("recv: '%s'\n", vec->eom);
     while (bytes_processed != bytes_recv) {
+        if (client->tubecbq != NULL) {
+            if (AQUEUE_EMPTY(client->tubecbq)) {
+                queue_free(client->tubecbq);
+                client->tubecbq = NULL;
+                buf = client->cbq;
+            }
+            else
+                buf = client->tubecbq;
+        }
+                
         if ( (node = AQUEUE_REAR(buf) ) == NULL ) {
             /* critical error */
             client->onerror(client, BSC_ERROR_INTERNAL);
@@ -303,7 +415,7 @@ bsc_error_t bsc_put(bsc            *client,
     AQUEUE_FRONT_NV((client)->cbq)->cb_data->put_info.request.data      = data;
     AQUEUE_FRONT_NV((client)->cbq)->cb_data->put_info.request.autofree  = free_when_finished;
 
-    QUEUE_FIN_PUT((client)->cbq);
+    QUEUE_FIN_PUT(client);
 
     return BSC_ERROR_NONE;
 }
@@ -321,6 +433,40 @@ static void got_put_res(bsc *client, queue_node *node, void *data, size_t len)
     if (put_info->request.autofree)
         free((char *)put_info->request.data);
 }
+
+bsc_error_t bsc_use(bsc                *client,
+                    bsc_use_user_cb     user_cb,
+                    void               *user_data,
+                    const char         *tube)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, use, got_use_res, tube) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->use_info.request.tube = tube;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->use_info.user_data    = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->use_info.user_cb      = user_cb;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_use_res(bsc *client, queue_node *node, void *data, size_t len)
+{
+    struct bsc_use_info *use_info = &(node->cb_data->use_info);
+
+    use_info->response.code = bsp_get_use_res(data, &(use_info->response.tube));
+
+    if ( strcmp(client->default_tube, use_info->response.tube ) != 0 ) {
+        free(client->default_tube);
+        if ( ( client->default_tube = strdup(use_info->response.tube) ) == NULL )
+            client->onerror(client, BSC_ERROR_MEMORY);
+    }
+    if (use_info->user_cb != NULL)
+        use_info->user_cb(client, use_info);
+}
+
 
 bsc_error_t bsc_reserve(bsc                *client,
                         bsc_reserve_user_cb user_cb,
@@ -341,7 +487,7 @@ bsc_error_t bsc_reserve(bsc                *client,
     AQUEUE_FRONT_NV(client->cbq)->cb_data->reserve_info.request.timeout   = timeout;
     AQUEUE_FRONT_NV(client->cbq)->cb_data->reserve_info.user_data         = user_data;
     AQUEUE_FRONT_NV(client->cbq)->cb_data->reserve_info.user_cb           = user_cb;
-    QUEUE_FIN_PUT((client)->cbq);
+    QUEUE_FIN_PUT(client);
     return BSC_ERROR_NONE;
 }
 
@@ -378,15 +524,181 @@ bsc_error_t bsc_delete(bsc                *client,
     AQUEUE_FRONT_NV(client->cbq)->cb_data->delete_info.request.id   = id;
     AQUEUE_FRONT_NV(client->cbq)->cb_data->delete_info.user_data    = user_data;
     AQUEUE_FRONT_NV(client->cbq)->cb_data->delete_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT((client)->cbq);
+    QUEUE_FIN_PUT(client);
     return BSC_ERROR_NONE;
 }
 
-static void got_delete_res(bsc *client, queue_node *node, void *data, size_t len)
+bsc_error_t bsc_release(bsc                 *client,
+                        bsc_release_user_cb  user_cb,
+                        void                *user_data,
+                        uint64_t             id, 
+                        uint32_t             priority,
+                        uint32_t             delay)
 {
-    if (node->cb_data->delete_info.user_cb != NULL) {
-        node->cb_data->delete_info.response.code = bsp_get_delete_res(data);
-        node->cb_data->delete_info.user_cb(client, &(node->cb_data->delete_info));
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, release, got_release_res, id, priority, delay) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->release_info.request.id         = id;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->release_info.request.priority   = priority;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->release_info.request.delay      = delay;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->release_info.user_data          = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->release_info.user_cb            = user_cb;
+    QUEUE_FIN_PUT(client);
+    return BSC_ERROR_NONE;
+}
+
+bsc_error_t bsc_bury(bsc                *client,
+                     bsc_bury_user_cb    user_cb,
+                     void               *user_data,
+                     uint64_t            id,
+                     uint32_t            priority)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, bury, got_bury_res, id, priority) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->bury_info.request.id         = id;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->bury_info.request.priority   = priority;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->bury_info.user_data          = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->bury_info.user_cb            = user_cb;
+    QUEUE_FIN_PUT(client);
+    return BSC_ERROR_NONE;
+}
+
+bsc_error_t bsc_touch(bsc                *client,
+                      bsc_touch_user_cb   user_cb,
+                      void               *user_data,
+                      uint64_t            id)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, touch, got_touch_res, id) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->touch_info.request.id   = id;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->touch_info.user_data    = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->touch_info.user_cb      = user_cb;
+    QUEUE_FIN_PUT(client);
+    return BSC_ERROR_NONE;
+}
+
+bsc_error_t bsc_watch(bsc                *client,
+                      bsc_watch_user_cb   user_cb,
+                      void               *user_data,
+                      const char         *tube)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, watch, got_watch_res, tube) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->watch_info.request.tube = tube;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->watch_info.user_data    = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->watch_info.user_cb      = user_cb;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_watch_res(bsc *client, queue_node *node, void *data, size_t len)
+{
+    struct bsc_watch_info *watch_info = &(node->cb_data->watch_info);
+    struct bsc_tube_list *p = client->watched_tubes;
+    int cmp_res;
+    bool matched_tube = false;
+
+    watch_info->response.code = bsp_get_watch_res(data, &(watch_info->response.count));
+
+    while (!matched_tube) {
+        if ( ( cmp_res = strcmp(p->name, watch_info->request.tube) ) == 0 )
+            matched_tube = true;
+        else if (cmp_res < 0) {
+            matched_tube = true;
+            if (!insert_tube_after(watch_info->request.tube, p))
+                client->onerror(client, BSC_ERROR_MEMORY);
+        }
+        else if (p->next == NULL) {
+            matched_tube = true;
+            if (!insert_tube_after(watch_info->request.tube, p))
+                client->onerror(client, BSC_ERROR_MEMORY);
+        }
+        p = p->next;
+    }
+
+    client->watched_tubes_count = watch_info->response.count;
+
+    if (watch_info->user_cb != NULL)
+        watch_info->user_cb(client, watch_info);
+}
+
+bsc_error_t bsc_ignore(bsc                *client,
+                       bsc_ignore_user_cb  user_cb,
+                       void               *user_data,
+                       const char         *tube)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, ignore, got_ignore_res, tube) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->ignore_info.request.tube = tube;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->ignore_info.user_data    = user_data;
+    AQUEUE_FRONT_NV(client->cbq)->cb_data->ignore_info.user_cb      = user_cb;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_ignore_res(bsc *client, queue_node *node, void *data, size_t len)
+{
+    struct bsc_ignore_info *ignore_info = &(node->cb_data->ignore_info);
+    struct bsc_tube_list *p = client->watched_tubes, *prev = NULL;
+    int cmp_res;
+
+    ignore_info->response.code = bsp_get_ignore_res(data, &(ignore_info->response.count));
+
+    if (ignore_info->response.code == BSP_RES_WATCHING) {
+        while (true) {
+            if ( ( cmp_res = strcmp(p->name, ignore_info->request.tube) ) == 0 ) {
+                if (prev != NULL)
+                    prev->next = p->next;
+                else
+                    client->watched_tubes = p->next;
+                free(p->name);
+                free(p);
+                break;
+            }
+            else if (cmp_res > 0)
+                break;
+            else if (p->next == NULL)
+                break;
+            else {
+                prev = p;
+                p = p->next;
+            }
+        }
+
+        client->watched_tubes_count = ignore_info->response.count;
+    }
+
+    if (ignore_info->user_cb != NULL)
+        ignore_info->user_cb(client, ignore_info);
+}
+
+static bool insert_tube_after(const char *name, struct bsc_tube_list *next)
+{
+    struct bsc_tube_list *new = NULL;
+
+    if ( ( new = (struct bsc_tube_list *)malloc(sizeof(struct bsc_tube_list)) ) == NULL )
+        return false;
+    else {
+        new->name  = strdup(name);
+        new->next  = next->next;
+        next->next = new;
+        return true;
     }
 }
 
