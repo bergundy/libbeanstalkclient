@@ -16,6 +16,7 @@
 
 char *host = "localhost", *port = BSP_DEFAULT_PORT;
 char *reconnect_test_port = "16666";
+char *tube_test_port = "16667";
 int counter = 0;
 int finished = 0;
 char *exp_data;
@@ -327,6 +328,160 @@ START_TEST(test_bsc_reconnect) {
 END_TEST
 
 /*****************************************************************************************************************/ 
+/*                                                      test 4                                                   */
+/*****************************************************************************************************************/ 
+static int watch_cb_count = 0;
+static int ignore_cb_count = 0;
+
+void tube_test_watch_cb(bsc *client, struct bsc_watch_info *info);
+
+void tube_test_ignore_cb2(bsc *client, struct bsc_ignore_info *info)
+{
+    fail_if(client->watched_tubes_count != 1, "watched tubes: %d/%d", client->watched_tubes_count, 2);
+    fail_if(strcmp(client->watched_tubes->name, "baba1"), "watched tubes [0]: %s", client->watched_tubes->name);
+    fail_if(client->watched_tubes->next, "watched tubes [1]: != NULL");
+
+    bsc_error = bsc_watch(client, tube_test_watch_cb, NULL, "baba2");
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
+}
+
+void tube_test_ignore_cb(bsc *client, struct bsc_ignore_info *info)
+{
+    fail_if(client->watched_tubes_count != 2, "watched tubes: %d/%d", client->watched_tubes_count, 2);
+    fail_if(strcmp(client->watched_tubes->name, "baba1"), "watched tubes [0]: %s", client->watched_tubes->name);
+    fail_if(strcmp(client->watched_tubes->next->name, "baba2"), "watched tubes [1]: %s", client->watched_tubes->next->name);
+    fail_if(client->watched_tubes->next->next, "watched tubes [2]: != NULL");
+
+    if (!ignore_cb_count++) {
+        bsc_error = bsc_ignore(client, tube_test_ignore_cb2, NULL, "baba2");
+        fail_if(bsc_error != BSC_ERROR_NONE, "bsc_ignore failed (%d)", bsc_error );
+    }
+    else {
+        system(kill_cmd);
+    }
+}
+
+void tube_test_watch_cb2(bsc *client, struct bsc_watch_info *info)
+{
+    fail_if(client->watched_tubes_count != 3, "watched tubes: %d/%d", client->watched_tubes_count, 2);
+    fail_if(strcmp(client->watched_tubes->name, "aba"), "watched tubes [0]: %s", client->watched_tubes->name);
+    fail_if(strcmp(client->watched_tubes->next->name, "baba1"), "watched tubes [1]: %s", client->watched_tubes->next->name);
+    fail_if(strcmp(client->watched_tubes->next->next->name, "baba2"), "watched tubes [2]: %s", client->watched_tubes->next->next->name);
+    fail_if(client->watched_tubes->next->next->next, "watched tubes [3]: != NULL");
+
+    bsc_error = bsc_ignore(client, tube_test_ignore_cb, NULL, "aba");
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_ignore failed (%d)", bsc_error );
+}
+
+void tube_test_watch_cb(bsc *client, struct bsc_watch_info *info)
+{
+    fail_if(client->watched_tubes_count != 2, "watched tubes: %d/%d", client->watched_tubes_count, 2);
+    fail_if(strcmp(client->watched_tubes->name, "baba1"), "watched tubes [0]: %s", client->watched_tubes->name);
+    fail_if(strcmp(client->watched_tubes->next->name, "baba2"), "watched tubes [1]: %s", client->watched_tubes->next->name);
+    fail_if(client->watched_tubes->next->next, "watched tubes [2]: != NULL");
+
+    if (watch_cb_count++) {
+        bsc_error = bsc_watch(client, tube_test_watch_cb2, NULL, "aba");
+        fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
+    }
+}
+
+static void tt_reconnect(bsc *client, bsc_error_t error)
+{
+    char *errorstr;
+    system(spawn_cmd);
+
+    if (error == BSC_ERROR_INTERNAL) {
+        fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
+    }
+    else if (error == BSC_ERROR_SOCKET) {
+        if ( bsc_reconnect(client, &errorstr) ) {
+            fail_if( AQUEUE_REAR(client->tubeq) == NULL, 
+                "after reconnect: AQUEUE_REAR(client->tubeq) == NULL");
+
+            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n"),
+                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQUEUE_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n");
+            AQUEUE_FIN_GET(client->tubeq);
+
+            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n"),
+                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n");
+            AQUEUE_FIN_GET(client->tubeq);
+
+            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n"),
+                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n");
+            AQUEUE_FIN_GET(client->tubeq);
+
+            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n"),
+                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQUEUE_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n");
+
+            printf("reconnect successful\n");
+
+            finished++;
+            return;
+        }
+    }
+    fail("critical error: maxed out reconnect attempts, quitting\n");
+}
+
+START_TEST(tube_test) {
+    bsc *client;
+    fd_set readset, writeset;
+    char *errstr = NULL;
+
+    sprintf(spawn_cmd, "beanstalkd -p %s -d", tube_test_port);
+    sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", tube_test_port);
+    system(spawn_cmd);
+
+    client = bsc_new_w_defaults( host, tube_test_port, "baba1", tt_reconnect, &errstr);
+    fail_if( client == NULL, "bsc_new: %s", errstr);
+
+    FD_ZERO(&readset);
+    FD_ZERO(&writeset);
+    FD_SET(client->fd, &readset);
+    FD_SET(client->fd, &writeset);
+
+    bsc_error = bsc_watch(client, tube_test_watch_cb, NULL, "baba2");
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
+
+    bsc_error = bsc_watch(client, tube_test_watch_cb, NULL, "baba2");
+    fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
+
+    while (!finished) {
+        FD_SET(client->fd, &readset);
+        FD_SET(client->fd, &writeset);
+        if (AQUEUE_EMPTY(client->outq)) {
+            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
+                fail("select()");
+                return;
+            }
+            if (FD_ISSET(client->fd, &readset)) {
+                bsc_read(client);
+            }
+        }
+        else {
+            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
+                fail("select()");
+                return;
+            }
+            if (FD_ISSET(client->fd, &readset)) {
+                bsc_read(client);
+            }
+            if (FD_ISSET(client->fd, &writeset)) {
+                bsc_write(client);
+            }
+        }
+    }
+
+    bsc_free(client);
+    system(kill_cmd);
+}
+END_TEST
+
+/*****************************************************************************************************************/ 
 /*                                                  end of tests                                                 */
 /*****************************************************************************************************************/ 
 
@@ -338,6 +493,7 @@ Suite *local_suite(void)
     tcase_add_test(tc, test_bsc_small_vec);
     tcase_add_test(tc, test_bsc_defaults);
     tcase_add_test(tc, test_bsc_reconnect);
+    tcase_add_test(tc, tube_test);
 
     suite_add_tcase(s, tc);
     return s;

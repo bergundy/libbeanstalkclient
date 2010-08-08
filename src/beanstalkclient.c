@@ -48,7 +48,8 @@ static void got_ ## cmd_type ## _res(bsc *client, queue_node *node, const char *
     }                                                                                               \
 }
 
-static bool insert_tube_after(const char *name, struct bsc_tube_list *next);
+static bool insert_tube_before(const char *name, struct bsc_tube_list **l);
+static bool insert_tube_after(const char *name, struct bsc_tube_list *l);
 
 static void got_put_res(bsc *client, queue_node *node, const char *data, size_t len);
 static void got_use_res(bsc *client, queue_node *node, const char *data, size_t len);
@@ -608,25 +609,50 @@ bsc_error_t bsc_watch(bsc                *client,
 static void got_watch_res(bsc *client, queue_node *node, const char *data, size_t len)
 {
     struct bsc_watch_info *watch_info = &(node->cb_data->watch_info);
-    struct bsc_tube_list *p = client->watched_tubes;
+    struct bsc_tube_list *p = client->watched_tubes, *prev = NULL;
     int cmp_res;
     bool matched_tube = false;
 
     watch_info->response.code = bsp_get_watch_res(data, &(watch_info->response.count));
 
     while (!matched_tube) {
-        if ( ( cmp_res = strcmp(p->name, watch_info->request.tube) ) == 0 )
+        if ( ( cmp_res = strcmp(p->name, watch_info->request.tube) ) == 0 ) {
+#ifdef DEBUG
+            printf("cmp_res = 0: '%s' - '%s'\n", p->name, watch_info->request.tube);
+#endif
             matched_tube = true;
-        else if (cmp_res < 0) {
+        }
+        else if (cmp_res > 0) {
             matched_tube = true;
-            if (!insert_tube_after(watch_info->request.tube, p))
-                client->onerror(client, BSC_ERROR_MEMORY);
+            if (prev == NULL) {
+#ifdef DEBUG
+                printf("cmp_res > 0 (prev == NULL): '%s' - '%s'\n", p->name, watch_info->request.tube);
+#endif
+                if (!insert_tube_before(watch_info->request.tube, &client->watched_tubes))
+                    client->onerror(client, BSC_ERROR_MEMORY);
+            }
+            else {
+#ifdef DEBUG
+                printf("cmp_res > 0 (prev != NULL): '%s' - '%s'\n", p->name, watch_info->request.tube);
+#endif
+                if (!insert_tube_after(watch_info->request.tube, prev))
+                    client->onerror(client, BSC_ERROR_MEMORY);
+            }
         }
         else if (p->next == NULL) {
             matched_tube = true;
+#ifdef DEBUG
+            printf("cmp_res < 0: '%s' - '%s'\n", p->name, watch_info->request.tube);
+#endif
             if (!insert_tube_after(watch_info->request.tube, p))
                 client->onerror(client, BSC_ERROR_MEMORY);
         }
+#ifdef DEBUG
+        else {
+            printf("cmp_res < 0 (not inserted): '%s' - '%s'\n", p->name, watch_info->request.tube);
+        }
+#endif
+        prev = p;
         p = p->next;
     }
 
@@ -740,8 +766,7 @@ static void got_peek_res(bsc *client, queue_node *node, const char *data, size_t
     }
 }
 
-
-static bool insert_tube_after(const char *name, struct bsc_tube_list *next)
+static bool insert_tube_before(const char *name, struct bsc_tube_list **l)
 {
     struct bsc_tube_list *newl = NULL;
 
@@ -749,8 +774,22 @@ static bool insert_tube_after(const char *name, struct bsc_tube_list *next)
         return false;
     else {
         newl->name  = strdup(name);
-        newl->next  = next->next;
-        next->next = newl;
+        newl->next  = *l;
+        *l          = newl;
+        return true;
+    }
+}
+
+static bool insert_tube_after(const char *name, struct bsc_tube_list *l)
+{
+    struct bsc_tube_list *newl = NULL;
+
+    if ( ( newl = (struct bsc_tube_list *)malloc(sizeof(struct bsc_tube_list)) ) == NULL )
+        return false;
+    else {
+        newl->name  = strdup(name);
+        newl->next  = l->next;
+        l->next     = newl;
         return true;
     }
 }
