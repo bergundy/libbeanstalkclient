@@ -167,7 +167,7 @@ struct bsc_ignore_info {
 
 enum peek_cmd_e {
     ID, READY, DELAYED, BURIED
-} peek_type;
+};
 
 typedef void (*bsc_peek_user_cb)(struct _bsc *, struct bsc_peek_info *);
 
@@ -211,16 +211,16 @@ struct _cbq_node {
     bsc_cb_p_t cb;
 };
 
-DEFINE_STRUCT_QUEUE(_cbq_queue, struct _cbq_node);
+DEFINE_STRUCT_QUEUE(_cbq, struct _cbq_node);
 
-typedef struct _cbq_node queue_node;
-typedef struct _cbq_queue queue;
+typedef struct _cbq_node cbq_node;
+typedef struct _cbq      cbq;
 
 #define BSC_BUFFER_NODES_FREE(client)   \
   ( AQUEUE_NODES_FREE((client)->outq)   \
   - (client)->outq_offset )
 
-#define QUEUE_FIN_PUT(client) (AQUEUE_FIN_PUT((client)->cbq), (client)->buffer_fill_cb != NULL ? (client)->buffer_fill_cb(client) : 0 )
+#define QUEUE_FIN_PUT(client) (AQUEUE_FIN_PUT((client)->cbqueue), (client)->buffer_fill_cb != NULL ? (client)->buffer_fill_cb(client) : 0 )
 
 #define QUEUE_FIN_CMD(q) do {            \
     if (AQUEUE_REAR_NV(q)->is_allocated) \
@@ -258,8 +258,8 @@ struct _bsc {
     char    *host;
     char    *port;
     char    *default_tube;
-    queue   *cbq;
-    queue   *tubecbq;
+    cbq     *cbqueue;
+    cbq     *tubecbq;
     ioq     *outq;
     ioq     *tubeq;
     ivector *vec;

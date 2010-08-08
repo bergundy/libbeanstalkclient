@@ -32,7 +32,7 @@ void onerror(bsc *client, bsc_error_t error)
 /*****************************************************************************************************************/ 
 /*                                                      test 1                                                   */
 /*****************************************************************************************************************/ 
-void small_vec_cb(bsc *client, queue_node *node, void *data, size_t len);
+void small_vec_cb(bsc *client, cbq_node *node, void *data, size_t len);
 void put_cb(bsc *client, struct bsc_put_info *info);
 void reserve_cb(bsc *client, struct bsc_reserve_info *info);
 void delete_cb(bsc *client, struct bsc_delete_info *info);
@@ -322,6 +322,69 @@ START_TEST(test_bsc_reconnect) {
     }
 
     system(kill_cmd);
+    bsc_free(client);
+}
+END_TEST
+
+/*****************************************************************************************************************/ 
+/*                                                      test 3                                                   */
+/*****************************************************************************************************************/ 
+
+void watch_test_watch_cb(bsc *client, struct bsc_watch_info *info)
+{
+    //if (info->response.count != 2) 
+    fail_if(strcmp(client->watched_tubes->name, "tube1"), "watch: expected 'tube1', got '%s'\n", client->watched_tubes->name);
+    fail_if(strcmp(client->watched_tubes->next->name, "tube2"), "watch: expected 'tube2', got '%s'\n", client->watched_tubes->next->name);
+}
+
+void watch_test_ignore_cb(bsc *client, struct bsc_ignore_info *info)
+{
+    if (info->response.code != BSP_IGNORE_RES_NOT_IGNORED) {
+
+    }
+}
+
+
+START_TEST(test_bsc_watch) {
+    bsc *client;
+    fd_set readset, writeset;
+    char *errstr = NULL;
+    client = bsc_new_w_defaults(host, BSP_DEFAULT_PORT, "tube1", onerror, &errstr);
+    fail_if( client == NULL, "bsc_new: %s", errstr);
+
+    bsc_watch(client, watch_test_watch_cb, NULL, "tube2");
+
+    FD_ZERO(&readset);
+    FD_ZERO(&writeset);
+    FD_SET(client->fd, &readset);
+    FD_SET(client->fd, &writeset);
+
+    while (!finished) {
+        FD_SET(client->fd, &readset);
+        FD_SET(client->fd, &writeset);
+        if (AQUEUE_EMPTY(client->outq)) {
+            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
+                fail("select()");
+                return;
+            }
+            if (FD_ISSET(client->fd, &readset)) {
+                bsc_read(client);
+            }
+        }
+        else {
+            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
+                fail("select()");
+                return;
+            }
+            if (FD_ISSET(client->fd, &readset)) {
+                bsc_read(client);
+            }
+            if (FD_ISSET(client->fd, &writeset)) {
+                bsc_write(client);
+            }
+        }
+    }
+
     bsc_free(client);
 }
 END_TEST
