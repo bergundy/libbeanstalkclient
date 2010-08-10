@@ -3,7 +3,36 @@
  * @file   beanstalkclient.c
  * @brief  nonblocking implementation of a beanstalk client
  * @date   07/05/2010 07:01:09 PM
- * @author Roey Berman, (royb@walla.net.il), Walla!
+ * @author   Roey Berman, (roey.berman@gmail.com)
+ * @version  1.0
+ *
+ * Copyright (c) 2010, Roey Berman, (roeyb.berman@gmail.com)
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    This product includes software developed by Roey Berman.
+ * 4. Neither the name of Roey Berman nor the
+ *    names of its contributors may be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY ROEY BERMAN ''AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL ROEY BERMAN BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * =====================================================================================
  */
 
@@ -61,6 +90,12 @@ GENERIC_RES_FUNC(touch)
 static void got_watch_res(bsc *client, cbq_node *node, const char *data, size_t len);
 static void got_ignore_res(bsc *client, cbq_node *node, const char *data, size_t len);
 static void got_peek_res(bsc *client, cbq_node *node, const char *data, size_t len);
+static void got_kick_res(bsc *client, cbq_node *node, const char *data, size_t len);
+GENERIC_RES_FUNC(pause_tube)
+static void got_stats_job_res(bsc *client, cbq_node *node, const char *data, size_t len);
+static void got_stats_tube_res(bsc *client, cbq_node *node, const char *data, size_t len);
+static void got_server_stats_res(bsc *client, cbq_node *node, const char *data, size_t len);
+static void got_list_tubes_res(bsc *client, cbq_node *node, const char *data, size_t len);
 
 static cbq *cbq_new(size_t size)
 {
@@ -103,9 +138,10 @@ static void cbq_free(cbq *q)
 
 bsc *bsc_new(const char *host, const char *port, const char *default_tube,
              error_callback_p_t onerror, size_t buf_len,
-             size_t vec_len, size_t vec_min, char **errorstr)
+             size_t vec_len, size_t vec_min, char *errorstr)
 {
     bsc *client = NULL;
+    bool error_initialized = false;
 
     if ( host == NULL || port == NULL )
         return NULL;
@@ -114,6 +150,7 @@ bsc *bsc_new(const char *host, const char *port, const char *default_tube,
         return NULL;
 
     client->buffer_fill_cb = NULL;
+    client->pre_disconnect_cb = client->post_connect_cb = NULL;
     client->host = client->port = NULL;
     client->vec = NULL;
     client->tubecbq = client->cbqueue = NULL;
@@ -151,6 +188,7 @@ bsc *bsc_new(const char *host, const char *port, const char *default_tube,
     client->onerror     = onerror;
     client->outq_offset = 0;
     client->watched_tubes_count = 1;
+    client->state = BSC_STATE_DISCONNECTED;
 
     if ( !bsc_connect(client, errorstr) )
         goto connect_err;
@@ -159,6 +197,7 @@ bsc *bsc_new(const char *host, const char *port, const char *default_tube,
 
 connect_err:
     free(client->watched_tubes->name);
+    error_initialized = true;
 tube_dup_list_err:
     free(client->watched_tubes);
 tube_list_malloc_err:
@@ -175,13 +214,16 @@ port_strdup_err:
     free(client->host);
 host_strdup_err:
     free(client);
-    if (errorstr != NULL && *errorstr == NULL)
-        *errorstr = strdup("out of memory");
+    if (!error_initialized && errorstr != NULL)
+        strcpy(errorstr, "out of memory");
     return NULL;
 }
 
 void bsc_free(bsc *client)
 {
+    if (client->state == BSC_STATE_CONNECTED)
+        bsc_disconnect(client);
+
     struct bsc_tube_list *p1 = client->watched_tubes, *p2 = NULL;
 
     do {
@@ -200,7 +242,7 @@ void bsc_free(bsc *client)
     free(client);
 }
 
-bool bsc_connect(bsc *client, char **errorstr)
+bool bsc_connect(bsc *client, char *errorstr)
 {
     ptrdiff_t queue_diff;
     bool      check_default    = true, ignore_default = true;
@@ -209,8 +251,14 @@ bool bsc_connect(bsc *client, char **errorstr)
     cbq      *tmpcbq           = NULL;
     int       cmp_res;
 
-    if ( ( client->fd = tcp_client(client->host, client->port, NONBLK | REUSE, errorstr) ) == SOCKERR )
+    if ( ( client->fd = tcp_client(client->host, client->port, errorstr) ) == SOCK_ERR )
         return false;
+
+    if (!unblock(client->fd, errorstr)) {
+        bsc_disconnect(client);
+        return false;
+    }
+        
 
     if ( ( queue_diff = client->outq_offset + (client->cbqueue->used - client->outq->used ) ) > 0 ) {
         client->outq->rear -= queue_diff;
@@ -241,6 +289,8 @@ bool bsc_connect(bsc *client, char **errorstr)
             check_default = false;
             if (cmp_res == 0)
                 ignore_default = false;
+            else if ( bsc_watch(client, NULL, NULL, p->name) != BSC_ERROR_NONE )
+                goto out_of_memory;
         }
         else if ( bsc_watch(client, NULL, NULL, p->name) != BSC_ERROR_NONE )
             goto out_of_memory;
@@ -254,20 +304,28 @@ bool bsc_connect(bsc *client, char **errorstr)
     client->tubecbq = client->cbqueue;
     client->cbqueue = tmpcbq;
 
+    client->state = BSC_STATE_CONNECTED;
+
+    if (client->post_connect_cb != NULL)
+        client->post_connect_cb(client);
+
     return true;
 
 out_of_memory:
     if (errorstr != NULL)
-        *errorstr = strdup("out of memory");
+        strcpy(errorstr, "out of memory");
     return false; 
 }
 
 void bsc_disconnect(bsc *client)
 {
-    while ( close(client->fd) == SOCKERR && errno != EBADF ) ;
+    if (client->pre_disconnect_cb != NULL)
+        client->pre_disconnect_cb(client);
+    while ( close(client->fd) == SOCK_ERR && errno != EBADF ) ;
+    client->state = BSC_STATE_DISCONNECTED;
 }
 
-bool bsc_reconnect(bsc *client, char **errorstr)
+bool bsc_reconnect(bsc *client, char *errorstr)
 {
     bsc_disconnect(client);
     return bsc_connect(client, errorstr);
@@ -279,14 +337,14 @@ void bsc_write(bsc *client)
     size_t  i;
     ssize_t nodes_written;
     if (client->tubeq != NULL) {
-        nodes_written = ioq_write_nv(client->tubeq, client->fd);
+        nodes_written = ioq_write(client->tubeq, client->fd);
         if (AQUEUE_EMPTY(client->tubeq)) {
             ioq_free(client->tubeq);
             client->tubeq = NULL;
         }
     }
     else
-        nodes_written = ioq_write_nv(client->outq, client->fd);
+        nodes_written = ioq_write(client->outq, client->fd);
 
     if (nodes_written < 0)
         switch (errno) {
@@ -297,6 +355,7 @@ void bsc_write(bsc *client)
             case EINVAL:
             default:
                 /* unexpected socket error - yield client callback */
+                client->state = BSC_STATE_DISCONNECTED;
                 client->onerror(client, BSC_ERROR_SOCKET);
         }
     else
@@ -324,7 +383,7 @@ void bsc_read(bsc *client)
     /* recieve data */
     if ( ( bytes_recv = recv(client->fd, vec->eom, IVECTOR_FREE(vec), 0) ) < 1 ) {
         switch (bytes_recv) {
-            case SOCKERR:
+            case SOCK_ERR:
                 switch (errno) {
                     case EAGAIN:
                     case EINTR:
@@ -333,6 +392,7 @@ void bsc_read(bsc *client)
                 }
             default:
                 /* unexpected socket error - reconnect */
+                client->state = BSC_STATE_DISCONNECTED;
                 client->onerror(client, BSC_ERROR_SOCKET);
                 return;
         }
@@ -725,16 +785,16 @@ bsc_error_t bsc_peek(bsc                *client,
     bsc_error_t error;
 
     switch (peek_type) {
-        case ID:
+        case BSC_PEEK_T_ID:
             if ( ( error = ENQ_CMD(client, peek, got_peek_res, id) ) != BSC_ERROR_NONE )
                 return error;
-        case READY:
+        case BSC_PEEK_T_READY:
             if ( ( error = ENQ_CMD(client, peek_ready, got_peek_res) ) != BSC_ERROR_NONE )
                 return error;
-        case DELAYED:
+        case BSC_PEEK_T_DELAYED:
             if ( ( error = ENQ_CMD(client, peek_delayed, got_peek_res) ) != BSC_ERROR_NONE )
                 return error;
-        case BURIED:
+        case BSC_PEEK_T_BURIED:
             if ( ( error = ENQ_CMD(client, peek_buried, got_peek_res) ) != BSC_ERROR_NONE )
                 return error;
     }
@@ -743,6 +803,7 @@ bsc_error_t bsc_peek(bsc                *client,
     AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.request.peek_type = peek_type;
     AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.request.id        = id;
     QUEUE_FIN_PUT(client);
+
     return BSC_ERROR_NONE;
 }
 
@@ -762,6 +823,206 @@ static void got_peek_res(bsc *client, cbq_node *node, const char *data, size_t l
         else {
             if (peek_info->user_cb != NULL)
                 peek_info->user_cb(client, peek_info);
+        }
+    }
+}
+
+bsc_error_t bsc_kick(bsc                *client,
+                     bsc_kick_user_cb    user_cb,
+                     void               *user_data,
+                     uint32_t            bound)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, kick, got_kick_res, bound) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.user_cb           = user_cb;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.request.bound     = bound;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_kick_res(bsc *client, cbq_node *node, const char *data, size_t len)
+{
+    struct bsc_kick_info *kick_info = &(node->cb_data->kick_info);
+
+    kick_info->response.code = bsp_get_kick_res(data, &(kick_info->response.count));
+
+    if (kick_info->user_cb != NULL)
+        kick_info->user_cb(client, kick_info);
+}
+
+bsc_error_t bsc_pause_tube(bsc                    *client, 
+                           bsc_pause_tube_user_cb  user_cb,
+                           void                   *user_data,
+                           const char             *tube,
+                           uint32_t                delay)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, pause_tube, got_pause_tube_res, tube, delay) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.user_cb           = user_cb;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.request.tube      = tube;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.request.delay     = delay;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+bsc_error_t bsc_stats_job(bsc                     *client,
+                          bsc_stats_job_user_cb    user_cb,
+                          void                    *user_data,
+                          uint64_t                 id)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, stats_job, got_stats_job_res, id) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.user_cb           = user_cb;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.request.id        = id;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_stats_job_res(bsc *client, cbq_node *node, const char *data, size_t len)
+{
+    struct bsc_stats_job_info *stats_job_info = &(node->cb_data->stats_job_info);
+
+    if (node->bytes_expected) {
+        stats_job_info->response.data  = (void *)data;
+        stats_job_info->response.stats = bsp_parse_job_stats(data);
+        if (stats_job_info->user_cb != NULL)
+            stats_job_info->user_cb(client, stats_job_info);
+    }
+    else {
+        stats_job_info->response.code = bsp_get_stats_job_res(data, &(stats_job_info->response.bytes));
+        if (stats_job_info->response.code == BSP_RES_OK)
+            node->bytes_expected = stats_job_info->response.bytes;
+        else {
+            if (stats_job_info->user_cb != NULL)
+                stats_job_info->user_cb(client, stats_job_info);
+        }
+    }
+}
+
+bsc_error_t bsc_stats_tube(bsc                     *client,
+                          bsc_stats_tube_user_cb    user_cb,
+                          void                     *user_data,
+                          const char               *tube)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, stats_tube, got_stats_tube_res, tube) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.user_cb           = user_cb;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.request.tube      = tube;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_stats_tube_res(bsc *client, cbq_node *node, const char *data, size_t len)
+{
+    struct bsc_stats_tube_info *stats_tube_info = &(node->cb_data->stats_tube_info);
+
+    if (node->bytes_expected) {
+        stats_tube_info->response.data  = (void *)data;
+        stats_tube_info->response.stats = bsp_parse_tube_stats(data);
+        if (stats_tube_info->user_cb != NULL)
+            stats_tube_info->user_cb(client, stats_tube_info);
+    }
+    else {
+        stats_tube_info->response.code = bsp_get_stats_tube_res(data, &(stats_tube_info->response.bytes));
+        if (stats_tube_info->response.code == BSP_RES_OK)
+            node->bytes_expected = stats_tube_info->response.bytes;
+        else {
+            if (stats_tube_info->user_cb != NULL)
+                stats_tube_info->user_cb(client, stats_tube_info);
+        }
+    }
+}
+
+bsc_error_t bsc_server_stats(bsc                      *client,
+                             bsc_server_stats_user_cb  user_cb,
+                             void                     *user_data)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, stats, got_server_stats_res) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->server_stats_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->server_stats_info.user_cb           = user_cb;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_server_stats_res(bsc *client, cbq_node *node, const char *data, size_t len)
+{
+    struct bsc_server_stats_info *server_stats_info = &(node->cb_data->server_stats_info);
+
+    if (node->bytes_expected) {
+        server_stats_info->response.data  = (void *)data;
+        server_stats_info->response.stats = bsp_parse_server_stats(data);
+        if (server_stats_info->user_cb != NULL)
+            server_stats_info->user_cb(client, server_stats_info);
+    }
+    else {
+        server_stats_info->response.code = bsp_get_stats_res(data, &(server_stats_info->response.bytes));
+        if (server_stats_info->response.code == BSP_RES_OK)
+            node->bytes_expected = server_stats_info->response.bytes;
+        else {
+            if (server_stats_info->user_cb != NULL)
+                server_stats_info->user_cb(client, server_stats_info);
+        }
+    }
+}
+
+bsc_error_t bsc_list_tubes(bsc                      *client,
+                           bsc_list_tubes_user_cb    user_cb,
+                           void                     *user_data)
+{
+    bsc_error_t error;
+
+    if ( ( error = ENQ_CMD(client, list_tubes, got_list_tubes_res) ) != BSC_ERROR_NONE )
+        return error;
+
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->list_tubes_info.user_data         = user_data;
+    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->list_tubes_info.user_cb           = user_cb;
+    QUEUE_FIN_PUT(client);
+
+    return BSC_ERROR_NONE;
+}
+
+static void got_list_tubes_res(bsc *client, cbq_node *node, const char *data, size_t len)
+{
+    struct bsc_list_tubes_info *list_tubes_info = &(node->cb_data->list_tubes_info);
+
+    if (node->bytes_expected) {
+        list_tubes_info->response.data  = (void *)data;
+        list_tubes_info->response.tubes = bsp_parse_tube_list(data);
+        if (list_tubes_info->user_cb != NULL)
+            list_tubes_info->user_cb(client, list_tubes_info);
+    }
+    else {
+        list_tubes_info->response.code = bsp_get_list_tubes_res(data, &(list_tubes_info->response.bytes));
+        if (list_tubes_info->response.code == BSP_RES_OK)
+            node->bytes_expected = list_tubes_info->response.bytes;
+        else {
+            if (list_tubes_info->user_cb != NULL)
+                list_tubes_info->user_cb(client, list_tubes_info);
         }
     }
 }

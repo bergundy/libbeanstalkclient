@@ -1,12 +1,16 @@
-#                                               -*- Autoconf -*-
-# Process this file with autoconf to produce a configure script.
-
-AC_PREREQ([2.65])
-AC_INIT([libbeanstalkclient], [0.2], [roey.berman@gmail.com])
+AC_PREREQ([2.59])
+AC_INIT([libbeanstalkclient], [1.0], [roey.berman@gmail.com])
 AC_CONFIG_SRCDIR([src/beanstalkclient.h])
 AC_CONFIG_HEADERS([config.h])
-AM_INIT_AUTOMAKE([color-tests foreign -Wall -Werror])
-PKG_CHECK_MODULES([CHECK], [check >= 0.9.4])
+AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+
+AC_ARG_ENABLE(tests,[  --enable-tests          build tests],[ 
+	PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
+	build_tests=true
+]
+)
+
+AM_CONDITIONAL([BUILD_TESTS], [test x$build_tests = xtrue ])
 
 LT_INIT
 

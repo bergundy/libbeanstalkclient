@@ -1,4 +1,4 @@
-LIBBEANSTALKCLIENT_VERSION = 0:2:0
+LIBBEANSTALKCLIENT_VERSION = 1:0:0
 
 lib_LTLIBRARIES     = libbeanstalkclient.la
 libbeanstalkclient_la_SOURCES = beanstalkclient.c ivector.c

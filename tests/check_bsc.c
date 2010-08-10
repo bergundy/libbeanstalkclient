@@ -1,9 +1,38 @@
 /**
  * =====================================================================================
- * @file   check_bsc.c
- * @brief  test suite for beanstalkclient library
- * @date   06/13/2010 05:58:28 PM
- * @author Roey Berman, (royb@walla.net.il), Walla!
+ * @file     check_bsc.c
+ * @brief    test suite for beanstalkclient library
+ * @date     06/13/2010 05:58:28 PM
+ * @author   Roey Berman, (roey.berman@gmail.com)
+ * @version  1.0
+ *
+ * Copyright (c) 2010, Roey Berman, (roeyb.berman@gmail.com)
+ * All rights reserved.
+ * 
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *    This product includes software developed by Roey Berman.
+ * 4. Neither the name of Roey Berman nor the
+ *    names of its contributors may be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ * 
+ * THIS SOFTWARE IS PROVIDED BY ROEY BERMAN ''AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL ROEY BERMAN BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * =====================================================================================
  */
 
@@ -100,11 +129,11 @@ void ignore_cb(bsc *client, struct bsc_ignore_info *info)
 }
 
 
-START_TEST(test_bsc_small_vec) {
-    char *errstr = NULL;
+START_TEST(small_vec_test) {
+    char errorstr[BSC_ERRSTR_LEN];
     bsc *client;
-    client = bsc_new(host, port, BSC_DEFAULT_TUBE, onerror, 16, 12, 4, &errstr);
-    fail_if( client == NULL, "bsc_new: %s", errstr);
+    client = bsc_new(host, port, BSC_DEFAULT_TUBE, onerror, 16, 12, 4, errorstr);
+    fail_if( client == NULL, "bsc_new: %s", errorstr);
     exp_data = "baba";
     fd_set readset, writeset;
 
@@ -186,13 +215,13 @@ void ignore_cb2(bsc *client, struct bsc_ignore_info *info)
 }
 
 
-START_TEST(test_bsc_defaults) {
+START_TEST(commands_test) {
     bsc *client;
-    char *errstr = NULL;
+    char errorstr[BSC_ERRSTR_LEN];
     fd_set readset, writeset;
     exp_data = "baba";
-    client = bsc_new_w_defaults(host, port, BSC_DEFAULT_TUBE, onerror, &errstr);
-    fail_if( client == NULL, "bsc_new: %s", errstr);
+    client = bsc_new_w_defaults(host, port, BSC_DEFAULT_TUBE, onerror, errorstr);
+    fail_if( client == NULL, "bsc_new: %s", errorstr);
 
     bsc_error = bsc_ignore(client, ignore_cb2, NULL, "default");
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_ignore failed (%d)", bsc_error );
@@ -250,14 +279,14 @@ void reconnect_test_ignore_cb(bsc *client, struct bsc_ignore_info *info)
 
 static void reconnect(bsc *client, bsc_error_t error)
 {
-    char *errorstr;
+    char errorstr[BSC_ERRSTR_LEN];
     system(spawn_cmd);
 
     if (error == BSC_ERROR_INTERNAL) {
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
     }
     else if (error == BSC_ERROR_SOCKET) {
-        if ( bsc_reconnect(client, &errorstr) ) {
+        if ( bsc_reconnect(client, errorstr) ) {
             fail_if( client->outq->used != 9, 
                 "after reconnect: nodes_used : %d/%d", client->outq->used, 9);
 
@@ -268,15 +297,15 @@ static void reconnect(bsc *client, bsc_error_t error)
     fail("critical error: maxed out reconnect attempts, quitting\n");
 }
 
-START_TEST(test_bsc_reconnect) {
+START_TEST(reconnect_test) {
     bsc *client;
     fd_set readset, writeset;
-    char *errstr = NULL;
+    char errorstr[BSC_ERRSTR_LEN];
     sprintf(spawn_cmd, "beanstalkd -p %s -d", reconnect_test_port);
     sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
     system(spawn_cmd);
-    client = bsc_new( host, reconnect_test_port, "baba", reconnect, 16, 12, 4, &errstr);
-    fail_if( client == NULL, "bsc_new: %s", errstr);
+    client = bsc_new( host, reconnect_test_port, "baba", reconnect, 16, 12, 4, errorstr);
+    fail_if( client == NULL, "bsc_new: %s", errorstr);
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
@@ -389,14 +418,14 @@ void tube_test_watch_cb(bsc *client, struct bsc_watch_info *info)
 
 static void tt_reconnect(bsc *client, bsc_error_t error)
 {
-    char *errorstr;
+    char errorstr[BSC_ERRSTR_LEN];
     system(spawn_cmd);
 
     if (error == BSC_ERROR_INTERNAL) {
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
     }
     else if (error == BSC_ERROR_SOCKET) {
-        if ( bsc_reconnect(client, &errorstr) ) {
+        if ( bsc_reconnect(client, errorstr) ) {
             fail_if( AQUEUE_REAR(client->tubeq) == NULL, 
                 "after reconnect: AQUEUE_REAR(client->tubeq) == NULL");
 
@@ -431,14 +460,14 @@ static void tt_reconnect(bsc *client, bsc_error_t error)
 START_TEST(tube_test) {
     bsc *client;
     fd_set readset, writeset;
-    char *errstr = NULL;
+    char errorstr[BSC_ERRSTR_LEN];
 
     sprintf(spawn_cmd, "beanstalkd -p %s -d", tube_test_port);
     sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", tube_test_port);
     system(spawn_cmd);
 
-    client = bsc_new_w_defaults( host, tube_test_port, "baba1", tt_reconnect, &errstr);
-    fail_if( client == NULL, "bsc_new: %s", errstr);
+    client = bsc_new_w_defaults( host, tube_test_port, "baba1", tt_reconnect, errorstr);
+    fail_if( client == NULL, "bsc_new: %s", errorstr);
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
@@ -491,9 +520,9 @@ Suite *local_suite(void)
     Suite *s  = suite_create(__FILE__);
     TCase *tc = tcase_create("bsc");
 
-    tcase_add_test(tc, test_bsc_small_vec);
-    tcase_add_test(tc, test_bsc_defaults);
-    tcase_add_test(tc, test_bsc_reconnect);
+    tcase_add_test(tc, small_vec_test);
+    tcase_add_test(tc, commands_test);
+    tcase_add_test(tc, reconnect_test);
     tcase_add_test(tc, tube_test);
 
     suite_add_tcase(s, tc);
