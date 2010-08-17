@@ -23,13 +23,11 @@ AM_PROG_CC_C_O
 AC_SUBST(LIBTOOL_DEPS)
 
 # Checks for libraries.
-AC_CHECK_LIB([beanstalkproto], [bsp_gen_put_hdr])
-AC_CHECK_LIB([check], [tcase_create])
 AC_CHECK_LIB([ioqueue], [ioq_new])
 AC_CHECK_LIB([sockutils], [tcp_client])
 
 # Checks for header files.
-AC_CHECK_HEADERS([stddef.h stdlib.h string.h sys/socket.h unistd.h])
+AC_CHECK_HEADERS([stddef.h stdlib.h string.h sys/socket.h unistd.h arrayqueue.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_HEADER_STDBOOL
@@ -43,8 +41,8 @@ AC_CHECK_TYPES([ptrdiff_t])
 
 # Checks for library functions.
 AC_FUNC_MALLOC
-AC_FUNC_REALLOC
-AC_CHECK_FUNCS([memchr strdup])
+AC_FUNC_STRTOD
+AC_CHECK_FUNCS([strchr strdup strndup strtoul])
 
 AC_CONFIG_FILES([Makefile
                  src/Makefile

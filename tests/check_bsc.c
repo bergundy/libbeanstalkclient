@@ -4,7 +4,7 @@
  * @brief    test suite for beanstalkclient library
  * @date     06/13/2010 05:58:28 PM
  * @author   Roey Berman, (roey.berman@gmail.com)
- * @version  1.0
+ * @version  1.1
  *
  * Copyright (c) 2010, Roey Berman, (roeyb.berman@gmail.com)
  * All rights reserved.
@@ -43,7 +43,7 @@
 #include <sys/select.h>
 #include "beanstalkclient.h"
 
-char *host = "localhost", *port = BSP_DEFAULT_PORT;
+char *host = "localhost", *port = BSC_DEFAULT_PORT;
 char *reconnect_test_port = "16666";
 char *tube_test_port = "16667";
 int counter = 0;
@@ -62,20 +62,19 @@ void onerror(bsc *client, bsc_error_t error)
 /*****************************************************************************************************************/ 
 /*                                                      test 1                                                   */
 /*****************************************************************************************************************/ 
-void small_vec_cb(bsc *client, cbq_node *node, void *data, size_t len);
 void put_cb(bsc *client, struct bsc_put_info *info);
 void reserve_cb(bsc *client, struct bsc_reserve_info *info);
 void delete_cb(bsc *client, struct bsc_delete_info *info);
 
 void put_cb(bsc *client, struct bsc_put_info *info)
 {
-    fail_if(info->response.code != BSP_PUT_RES_INSERTED, "put_cb: info->code != BSP_PUT_RES_INSERTED");
+    fail_if(info->response.code != BSC_PUT_RES_INSERTED, "put_cb: info->code != BSC_PUT_RES_INSERTED");
 }
 
 void reserve_cb(bsc *client, struct bsc_reserve_info *info)
 {
-    fail_if(info->response.code != BSP_RESERVE_RES_RESERVED,
-        "bsp_reserve: response.code != BSP_RESERVE_RES_RESERVED");
+    fail_if(info->response.code != BSC_RESERVE_RES_RESERVED,
+        "bsp_reserve: response.code != BSC_RESERVE_RES_RESERVED");
     fail_if(info->response.bytes != strlen(exp_data),
         "bsp_reserve: response.bytes != exp_bytes");
     fail_if(strcmp(info->response.data, exp_data) != 0,
@@ -87,8 +86,8 @@ void reserve_cb(bsc *client, struct bsc_reserve_info *info)
 
 void delete_cb(bsc *client, struct bsc_delete_info *info)
 {
-    fail_if( info->response.code != BSP_DELETE_RES_DELETED,
-        "bsp_delete: response.code != BSP_DELETE_RES_DELETED");
+    fail_if( info->response.code != BSC_DELETE_RES_DELETED,
+        "bsp_delete: response.code != BSC_DELETE_RES_DELETED");
 
     if (info->user_data) {
         exp_data = "bababuba12341234";
@@ -103,16 +102,16 @@ void delete_cb(bsc *client, struct bsc_delete_info *info)
 
 void use_cb(bsc *client, struct bsc_use_info *info)
 {
-    fail_if( info->response.code != BSP_USE_RES_USING,
-        "bsp_use: response.code != BSP_USE_RES_USING");
+    fail_if( info->response.code != BSC_USE_RES_USING,
+        "bsp_use: response.code != BSC_USE_RES_USING");
     fail_if( strcmp(info->response.tube, info->request.tube),
         "bsp_use: response.tube != info->request.tube");
 }
 
 void watch_cb(bsc *client, struct bsc_watch_info *info)
 {
-    fail_if( info->response.code != BSP_RES_WATCHING,
-        "bsp_watch: response.code != BSP_RES_WATCHING");
+    fail_if( info->response.code != BSC_RES_WATCHING,
+        "bsp_watch: response.code != BSC_RES_WATCHING");
     fail_if( client->watched_tubes_count != info->response.count,
         "bsp_watch: watched_tubes_count != response.count" );
     fail_if( strcmp(client->watched_tubes->name, BSC_DEFAULT_TUBE) );
@@ -121,8 +120,8 @@ void watch_cb(bsc *client, struct bsc_watch_info *info)
 
 void ignore_cb(bsc *client, struct bsc_ignore_info *info)
 {
-    fail_if( info->response.code != BSP_RES_WATCHING,
-        "bsp_ignore: response.code != BSP_RES_WATCHING");
+    fail_if( info->response.code != BSC_RES_WATCHING,
+        "bsp_ignore: response.code != BSC_RES_WATCHING");
     fail_if( client->watched_tubes_count != info->response.count,
         "bsp_ignore: watched_tubes_count != response.count" );
     fail_if( strcmp(client->watched_tubes->name, "test") );
@@ -173,7 +172,7 @@ START_TEST(small_vec_test) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (AQUEUE_EMPTY(client->outq)) {
+        if (AQ_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
@@ -206,8 +205,8 @@ END_TEST
 
 void ignore_cb2(bsc *client, struct bsc_ignore_info *info)
 {
-    fail_if( info->response.code != BSP_IGNORE_RES_NOT_IGNORED,
-        "bsc_ignore: response.code != BSP_IGNORE_RES_NOT_IGNORED");
+    fail_if( info->response.code != BSC_IGNORE_RES_NOT_IGNORED,
+        "bsc_ignore: response.code != BSC_IGNORE_RES_NOT_IGNORED");
     fail_if( strcmp(client->watched_tubes->name, BSC_DEFAULT_TUBE) );
 
     if (info->user_data != NULL)
@@ -240,7 +239,7 @@ START_TEST(commands_test) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (AQUEUE_EMPTY(client->outq)) {
+        if (AQ_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
@@ -328,7 +327,7 @@ START_TEST(reconnect_test) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (AQUEUE_EMPTY(client->outq)) {
+        if (AQ_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;
@@ -426,27 +425,27 @@ static void tt_reconnect(bsc *client, bsc_error_t error)
     }
     else if (error == BSC_ERROR_SOCKET) {
         if ( bsc_reconnect(client, errorstr) ) {
-            fail_if( AQUEUE_REAR(client->tubeq) == NULL, 
-                "after reconnect: AQUEUE_REAR(client->tubeq) == NULL");
+            fail_if( AQ_REAR(client->tubeq) == NULL, 
+                "after reconnect: AQ_REAR(client->tubeq) == NULL");
 
-            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n"),
-                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
-                AQUEUE_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n");
-            AQUEUE_FIN_GET(client->tubeq);
+            fail_if( strcmp(AQ_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n"),
+                "after reconnect: AQ_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQ_REAR(client->tubeq)->vec->iov_base, "use baba1\r\n");
+            AQ_DEQ_FIN(client->tubeq);
 
-            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n"),
-                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
-                AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n");
-            AQUEUE_FIN_GET(client->tubeq);
+            fail_if( strcmp(AQ_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n"),
+                "after reconnect: AQ_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQ_REAR(client->tubeq)->vec->iov_base, "watch baba1\r\n");
+            AQ_DEQ_FIN(client->tubeq);
 
-            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n"),
-                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
-                AQUEUE_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n");
-            AQUEUE_FIN_GET(client->tubeq);
+            fail_if( strcmp(AQ_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n"),
+                "after reconnect: AQ_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQ_REAR(client->tubeq)->vec->iov_base, "watch baba2\r\n");
+            AQ_DEQ_FIN(client->tubeq);
 
-            fail_if( strcmp(AQUEUE_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n"),
-                "after reconnect: AQUEUE_REAR(client->tubeq) iov_base (%s) != (%s)",
-                AQUEUE_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n");
+            fail_if( strcmp(AQ_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n"),
+                "after reconnect: AQ_REAR(client->tubeq) iov_base (%s) != (%s)",
+                AQ_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n");
 
             printf("reconnect successful\n");
 
@@ -483,7 +482,7 @@ START_TEST(tube_test) {
     while (!finished) {
         FD_SET(client->fd, &readset);
         FD_SET(client->fd, &writeset);
-        if (AQUEUE_EMPTY(client->outq)) {
+        if (AQ_EMPTY(client->outq)) {
             if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
                 fail("select()");
                 return;

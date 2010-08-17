@@ -43,13 +43,204 @@
     extern "C" {
 #endif
 
-#include <beanstalkproto.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <ioqueue.h>
-#include "ivector.h"
-#include <arrayqueue.h>
+
+struct _ivector;
+struct _cbq;
+
+/*-----------------------------------------------------------------------------
+ * response_t enum
+ *-----------------------------------------------------------------------------*/
+
+enum _bsc_response_e_t {
+    BSC_RES_CLIENT_OUT_OF_MEMORY = -2, // client is out of memory
+    BSC_RES_UNRECOGNIZED = -1,         // parse error
+
+    /* general errors */
+    BSC_RES_OUT_OF_MEMORY,          // server is out of memory
+    BSC_RES_INTERNAL_ERROR,
+    BSC_RES_BAD_FORMAT,
+    BSC_RES_UNKNOWN_COMMAND,
+
+    /* general responses */
+    BSC_RES_OK,
+    BSC_RES_BURIED,
+    BSC_RES_NOT_FOUND,
+    BSC_RES_WATCHING,
+
+    /* put cmd results */
+    BSC_PUT_RES_INSERTED,
+    BSC_PUT_RES_EXPECTED_CRLF,
+    BSC_PUT_RES_JOB_TOO_BIG, 
+    BSC_PUT_RES_DRAINING, 
+
+    /* use cmd result */
+    BSC_USE_RES_USING, 
+
+    /* reserve cmd result */
+    BSC_RESERVE_RES_RESERVED,
+    BSC_RESERVE_RES_DEADLINE_SOON,
+    BSC_RESERVE_RES_TIMED_OUT,
+
+    /* delete cmd result */
+    BSC_DELETE_RES_DELETED,
+
+    /* release cmd result */
+    BSC_RELEASE_RES_RELEASED,
+
+    /* touch cmd result */
+    BSC_TOUCH_RES_TOUCHED,
+
+    /* ignore cmd result */
+    BSC_IGNORE_RES_NOT_IGNORED,
+
+    /* peek cmd result */
+    BSC_PEEK_RES_FOUND,
+
+    /* kick cmd result */
+    BSC_KICK_RES_KICKED,
+
+    /* pause-tube cmd result */
+    BSC_PAUSE_TUBE_RES_PAUSED
+};
+
+typedef enum _bsc_response_e_t bsc_response_t;
+
+/*-----------------------------------------------------------------------------
+ * job stats definition
+ *-----------------------------------------------------------------------------*/
+
+enum _bsc_job_state {
+    BSC_JOB_STATE_UNKNOWN = -1,
+    BSC_JOB_STATE_READY,
+    BSC_JOB_STATE_BURIED,
+    BSC_JOB_STATE_RESERVED,
+    BSC_JOB_STATE_DELAYED
+};
+
+typedef enum _bsc_job_state bsc_job_state;
+
+struct _bsc_job_stats {
+    uint64_t id;
+    char     *tube;
+    bsc_job_state state;
+    uint32_t pri;
+    uint32_t age;
+    uint32_t delay;
+    uint32_t ttr;
+    uint32_t time_left;
+    uint16_t reserves;
+    uint16_t timeouts;
+    uint16_t releases;
+    uint16_t buries;
+    uint16_t kicks;
+};
+
+typedef struct _bsc_job_stats bsc_job_stats;
+
+/** 
+* frees all memory allocated by job
+* 
+* @param job the stats struct to free
+*/
+void bsc_job_stats_free(bsc_job_stats *job);
+
+/*-----------------------------------------------------------------------------
+ * tube stats definition
+ *-----------------------------------------------------------------------------*/
+
+struct _bsc_tube_stats {
+    char *name;
+    uint32_t current_jobs_urgent;
+    uint32_t current_jobs_ready;
+    uint32_t current_jobs_reserved;
+    uint32_t current_jobs_delayed;
+    uint32_t current_jobs_buried;
+    uint32_t total_jobs;
+    uint32_t current_using;
+    uint32_t current_watching;
+    uint32_t current_waiting;
+    uint32_t cmd_pause_tube;
+    uint32_t pause;
+    uint32_t pause_time_left;
+};
+
+typedef struct _bsc_tube_stats bsc_tube_stats;
+
+/** 
+* frees all memory allocated by tube
+* 
+* @param tube the stats struct to free
+*/
+void bsc_tube_stats_free(bsc_tube_stats *tube);
+
+/*-----------------------------------------------------------------------------
+ * server stats definition
+ *-----------------------------------------------------------------------------*/
+
+struct _bsc_server_stats {
+    uint32_t current_jobs_urgent;
+    uint32_t current_jobs_ready;
+    uint32_t current_jobs_reserved;
+    uint32_t current_jobs_delayed;
+    uint32_t current_jobs_buried;
+    uint32_t cmd_put;
+    uint32_t cmd_peek;
+    uint32_t cmd_peek_ready;
+    uint32_t cmd_peek_delayed;
+    uint32_t cmd_peek_buried;
+    uint32_t cmd_reserve;
+    uint32_t cmd_reserve_with_timeout;
+    uint32_t cmd_delete;
+    uint32_t cmd_release;
+    uint32_t cmd_use;
+    uint32_t cmd_watch;
+    uint32_t cmd_ignore;
+    uint32_t cmd_bury;
+    uint32_t cmd_kick;
+    uint32_t cmd_touch;
+    uint32_t cmd_stats;
+    uint32_t cmd_stats_job;
+    uint32_t cmd_stats_tube;
+    uint32_t cmd_list_tubes;
+    uint32_t cmd_list_tube_used;
+    uint32_t cmd_list_tubes_watched;
+    uint32_t cmd_pause_tube;
+    uint32_t job_timeouts;
+    uint32_t total_jobs;
+    uint32_t max_job_size;
+    uint32_t current_tubes;
+    uint32_t current_connections;
+    uint32_t current_producers;
+    uint32_t current_workers;
+    uint32_t current_waiting;
+    uint32_t total_connections;
+    uint32_t pid;
+    char     *version;
+    double   rusage_utime;
+    double   rusage_stime;
+    uint32_t uptime;
+    uint32_t binlog_oldest_index;
+    uint32_t binlog_current_index;
+    uint32_t binlog_max_size;
+};
+
+typedef struct _bsc_server_stats bsc_server_stats;
+
+/** 
+* frees all memory allocated by server (stats)
+* 
+* @param server the server stats struct to free
+*/
+void bsc_server_stats_free(bsc_server_stats *server);
+
+/*-----------------------------------------------------------------------------
+ * callbacks and structs
+ *-----------------------------------------------------------------------------*/
 
 struct _bsc;
-struct _cbq_node;
 struct bsc_put_info;
 struct bsc_use_info;
 struct bsc_reserve_info;
@@ -81,7 +272,7 @@ struct bsc_put_info {
         bool        autofree;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint64_t       id;
     } response;
 };
@@ -95,7 +286,7 @@ struct bsc_use_info {
         const char *tube;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         char          *tube;
     } response;
 };
@@ -109,7 +300,7 @@ struct bsc_reserve_info {
         int32_t timeout;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint64_t       id;
         size_t         bytes;
         void          *data;
@@ -125,7 +316,7 @@ struct bsc_delete_info {
         uint64_t id;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
     } response;
 };
 
@@ -140,7 +331,7 @@ struct bsc_release_info {
         uint32_t delay;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
     } response;
 };
 
@@ -154,7 +345,7 @@ struct bsc_bury_info {
         uint32_t priority;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
     } response;
 };
 
@@ -167,7 +358,7 @@ struct bsc_touch_info {
         uint64_t id;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
     } response;
 };
 
@@ -180,7 +371,7 @@ struct bsc_watch_info {
         const char *tube;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint32_t count;
     } response;
 };
@@ -194,7 +385,7 @@ struct bsc_ignore_info {
         const char *tube;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint32_t count;
     } response;
 };
@@ -213,7 +404,7 @@ struct bsc_peek_info {
         uint64_t id;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint64_t       id;
         size_t         bytes;
         void          *data;
@@ -229,7 +420,7 @@ struct bsc_kick_info {
         uint32_t bound;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         uint32_t       count;
     } response;
 };
@@ -244,7 +435,7 @@ struct bsc_pause_tube_info {
         uint32_t    delay;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
     } response;
 };
 
@@ -257,10 +448,10 @@ struct bsc_stats_job_info {
         uint64_t id;
     } request;
     struct {
-        bsp_response_t code;
+        bsc_response_t code;
         size_t         bytes;
         char          *data;
-        bsp_job_stats *stats;
+        bsc_job_stats *stats;
     } response;
 };
 
@@ -273,10 +464,10 @@ struct bsc_stats_tube_info {
         const char *tube;
     } request;
     struct {
-        bsp_response_t  code;
+        bsc_response_t  code;
         size_t          bytes;
         char           *data;
-        bsp_tube_stats *stats;
+        bsc_tube_stats *stats;
     } response;
 };
 
@@ -286,10 +477,10 @@ struct bsc_server_stats_info {
     void *user_data;
     bsc_server_stats_user_cb user_cb;
     struct {
-        bsp_response_t    code;
+        bsc_response_t    code;
         size_t            bytes;
         char             *data;
-        bsp_server_stats *stats;
+        bsc_server_stats *stats;
     } response;
 };
 
@@ -299,7 +490,7 @@ struct bsc_list_tubes_info {
     void *user_data;
     bsc_list_tubes_user_cb user_cb;
     struct {
-        bsp_response_t  code;
+        bsc_response_t  code;
         size_t          bytes;
         char           *data;
         char          **tubes;
@@ -325,41 +516,18 @@ union bsc_cmd_info {
     struct bsc_list_tubes_info      list_tubes_info;
 };
 
-typedef void (*bsc_cb_p_t)(struct _bsc *, struct _cbq_node *, const char *, size_t);
+#define BSC_BUFFER_NODES_FREE(c) (AQ_NODES_FREE((c)->outq) - (c)->outq_offset)
 
-struct _cbq_node {
-    void  *data;
-    int    len;
-    bool   is_allocated;
-    size_t bytes_expected;
-    off_t  outq_offset;
-    union  bsc_cmd_info *cb_data;
-    bsc_cb_p_t cb;
-};
-
-DEFINE_STRUCT_QUEUE(_cbq, struct _cbq_node);
-
-typedef struct _cbq_node cbq_node;
-typedef struct _cbq      cbq;
-
-#define BSC_BUFFER_NODES_FREE(client)   \
-  ( AQUEUE_NODES_FREE((client)->outq)   \
-  - (client)->outq_offset )
-
-#define QUEUE_FIN_PUT(client) (AQUEUE_FIN_PUT((client)->cbqueue), (client)->buffer_fill_cb != NULL ? (client)->buffer_fill_cb(client) : 0 )
-
-#define QUEUE_FIN_CMD(q) do {            \
-    if (AQUEUE_REAR_NV(q)->is_allocated) \
-        free(AQUEUE_REAR_NV(q)->data);   \
-    AQUEUE_FIN_GET(q);                   \
-} while (false)
-
-#define BSC_DEFAULT_BUFFER_SIZE 1024
-#define BSC_DEFAULT_VECTOR_SIZE 1024
-#define BSC_DEFAULT_VECTOR_MIN  256
-#define BSC_DEFAULT_TUBE        "default"
-#define BSC_RESERVE_NO_TIMEOUT  -1
-#define BSC_ERRSTR_LEN          512
+#define BSC_DEFAULT_BUFFER_SIZE   1024
+#define BSC_DEFAULT_VECTOR_SIZE   1024
+#define BSC_DEFAULT_VECTOR_MIN    256
+#define BSC_DEFAULT_TUBE          "default"
+#define BSC_RESERVE_NO_TIMEOUT    -1
+#define BSC_ERRSTR_LEN            512
+#define BSC_DEFAULT_PORT          "11300"
+#define BSC_PROTO_VALID_NAME_CHAR "-+/;.$_()"
+#define BSC_PROTO_VALID_NAME_START_CHAR "+/;.$_()"
+#define BSC_MAX_TUBE_NAME         200
 
 #define bsc_new_w_defaults(host, port, tube, onerror, errorstr)  \
     ( bsc_new( (host), (port), (tube), (onerror),                \
@@ -388,11 +556,11 @@ struct _bsc {
     char    *host;
     char    *port;
     char    *default_tube;
-    cbq     *cbqueue;
-    cbq     *tubecbq;
+    struct _cbq     *cbqueue;
+    struct _cbq     *tubecbq;
     ioq     *outq;
     ioq     *tubeq;
-    ivector *vec;
+    struct _ivector *vec;
     size_t   vec_min;
     void    *data;
     size_t   outq_offset;
@@ -688,10 +856,10 @@ bsc_error_t bsc_pause_tube(bsc                    *client,
 * 
 * @return           the error code
 */
-bsc_error_t bsc_stats_job(bsc                     *client,
-                          bsc_stats_job_user_cb    user_cb,
-                          void                    *user_data,
-                          uint64_t                 id);
+bsc_error_t bsc_get_stats_job(bsc                     *client,
+                              bsc_stats_job_user_cb    user_cb,
+                              void                    *user_data,
+                              uint64_t                 id);
 
 /** 
 * gives statistical information about the specified tube.
@@ -704,10 +872,10 @@ bsc_error_t bsc_stats_job(bsc                     *client,
 * 
 * @return           the error code
 */
-bsc_error_t bsc_stats_tube(bsc                     *client,
-                           bsc_stats_tube_user_cb   user_cb,
-                           void                    *user_data,
-                           const char              *tube);
+bsc_error_t bsc_get_stats_tube(bsc                     *client,
+                               bsc_stats_tube_user_cb   user_cb,
+                               void                    *user_data,
+                               const char              *tube);
 
 /** 
 * gives statistical information about the server client is connected to.
@@ -718,9 +886,9 @@ bsc_error_t bsc_stats_tube(bsc                     *client,
 * 
 * @return           the error code
 */
-bsc_error_t bsc_server_stats(bsc                       *client,
-                             bsc_server_stats_user_cb   user_cb,
-                             void                      *user_data);
+bsc_error_t bsc_get_server_stats(bsc                       *client,
+                                 bsc_server_stats_user_cb   user_cb,
+                                 void                      *user_data);
 
 /** 
 * The list-tubes command returns a list of all existing tubes.
@@ -731,9 +899,9 @@ bsc_error_t bsc_server_stats(bsc                       *client,
 * 
 * @return           the error code
 */
-bsc_error_t bsc_list_tubes(bsc                    *client,
-                           bsc_list_tubes_user_cb  user_cb,
-                           void                   *user_data);
+bsc_error_t bsc_get_list_tubes(bsc                    *client,
+                               bsc_list_tubes_user_cb  user_cb,
+                               void                   *user_data);
 
 #ifdef __cplusplus
     }

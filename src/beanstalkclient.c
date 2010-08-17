@@ -1,10 +1,10 @@
 /**
  * =====================================================================================
- * @file   beanstalkclient.c
- * @brief  nonblocking implementation of a beanstalk client
- * @date   07/05/2010 07:01:09 PM
+ * @file     beanstalkclient.c
+ * @brief    nonblocking implementation of a beanstalk client
+ * @date     07/05/2010 07:01:09 PM
  * @author   Roey Berman, (roey.berman@gmail.com)
- * @version  1.0
+ * @version  1.1
  *
  * Copyright (c) 2010, Roey Berman, (roeyb.berman@gmail.com)
  * All rights reserved.
@@ -48,22 +48,24 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sockutils.h>
-#include <beanstalkproto.h>
 #include "beanstalkclient.h"
+#include "beanstalkproto.h"
+#include "cbq.h"
+#include "ivector.h"
 
 #define CONST_STRLEN(str) (sizeof(str)/sizeof(char)-1)
 
-#define ENQ_CMD_(client, gen_cmd, nodes, u_cb, ...) (                                             \
-    BSC_BUFFER_NODES_FREE(client) < (nodes) ? BSC_ERROR_QUEUE_FULL                                \
-    : ( ( AQUEUE_FRONT_NV((client)->cbqueue)->data                                                \
-        = gen_cmd( &(AQUEUE_FRONT_NV((client)->cbqueue)->len),                                    \
-            &(AQUEUE_FRONT_NV((client)->cbqueue)->is_allocated), ## __VA_ARGS__) ) == NULL        \
-        ? BSC_ERROR_MEMORY                                                                        \
-        : ( IOQ_PUT_NV( (client)->outq, AQUEUE_FRONT_NV((client)->cbqueue)->data,                 \
-                    AQUEUE_FRONT_NV((client)->cbqueue)->len, false ),                             \
-              AQUEUE_FRONT_NV((client)->cbqueue)->cb             = u_cb,                          \
-              AQUEUE_FRONT_NV((client)->cbqueue)->bytes_expected = 0,                             \
-              AQUEUE_FRONT_NV((client)->cbqueue)->outq_offset    = (nodes) - 1,                   \
+#define ENQ_CMD_(client, gen_cmd, nodes, u_cb, ...) (                                       \
+    BSC_BUFFER_NODES_FREE(client) < (nodes) ? BSC_ERROR_QUEUE_FULL                          \
+    : ( ( AQ_FRONT_((client)->cbqueue)->data                                                \
+        = gen_cmd( &(AQ_FRONT_((client)->cbqueue)->len),                                    \
+            &(AQ_FRONT_((client)->cbqueue)->is_allocated), ## __VA_ARGS__) ) == NULL        \
+        ? BSC_ERROR_MEMORY                                                                  \
+        : ( ioq_enq_( (client)->outq, AQ_FRONT_((client)->cbqueue)->data,                   \
+                    AQ_FRONT_((client)->cbqueue)->len, false ),                             \
+              AQ_FRONT_((client)->cbqueue)->cb             = u_cb,                          \
+              AQ_FRONT_((client)->cbqueue)->bytes_expected = 0,                             \
+              AQ_FRONT_((client)->cbqueue)->outq_offset    = (nodes) - 1,                   \
               BSC_ERROR_NONE ) ) )
 
 #define ENQ_CMD(client, cmd, u_cb, ...) ENQ_CMD_(client, bsp_gen_ ## cmd ## _cmd, 1, u_cb, ## __VA_ARGS__)
@@ -96,45 +98,6 @@ static void got_stats_job_res(bsc *client, cbq_node *node, const char *data, siz
 static void got_stats_tube_res(bsc *client, cbq_node *node, const char *data, size_t len);
 static void got_server_stats_res(bsc *client, cbq_node *node, const char *data, size_t len);
 static void got_list_tubes_res(bsc *client, cbq_node *node, const char *data, size_t len);
-
-static cbq *cbq_new(size_t size)
-{
-    cbq *q;
-    union bsc_cmd_info *cmd_info;
-    register size_t i;
-
-    if ( ( q = (cbq *)malloc(sizeof(cbq)) ) == NULL )
-        return NULL;
-
-    if ( ( q->nodes = (cbq_node *)malloc(sizeof(cbq_node) * size) ) == NULL )
-        goto node_malloc_error;
-
-    if ( ( cmd_info = (union bsc_cmd_info *)malloc(sizeof(union bsc_cmd_info) * size) ) == NULL )
-        goto cmd_info_malloc_error;
-
-    for (i = 0; i < size; ++i)
-        q->nodes[i].cb_data = cmd_info+i;
-
-    q->size = size;
-    q->rear = q->front = 0;
-    q->used = 0;
-
-    return q;
-
-cmd_info_malloc_error:
-    free(q->nodes);
-node_malloc_error:
-    free(q);
-    return NULL;
-}
-
-static void cbq_free(cbq *q)
-{
-    while ( !AQUEUE_EMPTY(q) )
-        QUEUE_FIN_CMD(q);
-    free(q->nodes[0].cb_data);
-    free(q);
-}
 
 bsc *bsc_new(const char *host, const char *port, const char *default_tube,
              error_callback_p_t onerror, size_t buf_len,
@@ -337,14 +300,14 @@ void bsc_write(bsc *client)
     size_t  i;
     ssize_t nodes_written;
     if (client->tubeq != NULL) {
-        nodes_written = ioq_write(client->tubeq, client->fd);
-        if (AQUEUE_EMPTY(client->tubeq)) {
+        nodes_written = ioq_dump(client->tubeq, client->fd);
+        if (AQ_EMPTY(client->tubeq)) {
             ioq_free(client->tubeq);
             client->tubeq = NULL;
         }
     }
     else
-        nodes_written = ioq_write(client->outq, client->fd);
+        nodes_written = ioq_dump(client->outq, client->fd);
 
     if (nodes_written < 0)
         switch (errno) {
@@ -401,7 +364,7 @@ void bsc_read(bsc *client)
     //printf("recv: '%s'\n", vec->eom);
     while (bytes_processed != bytes_recv) {
         if (client->tubecbq != NULL) {
-            if (AQUEUE_EMPTY(client->tubecbq)) {
+            if (AQ_EMPTY(client->tubecbq)) {
                 cbq_free(client->tubecbq);
                 client->tubecbq = NULL;
                 buf = client->cbqueue;
@@ -410,7 +373,7 @@ void bsc_read(bsc *client)
                 buf = client->tubecbq;
         }
                 
-        if ( (node = AQUEUE_REAR(buf) ) == NULL ) {
+        if ( (node = AQ_REAR(buf) ) == NULL ) {
             /* critical error */
             client->onerror(client, BSC_ERROR_INTERNAL);
             return;
@@ -426,7 +389,7 @@ void bsc_read(bsc *client)
                 node->cb(client, node, vec->som, eom - vec->som);
             }
             vec->eom = vec->som = eom + 2;
-            QUEUE_FIN_CMD(buf);
+            CBQ_DEQ_FIN(buf);
         }
         else {
             if ( ( eom = (char *)memchr(vec->eom, '\n', bytes_recv - bytes_processed) ) == NULL )
@@ -441,7 +404,7 @@ void bsc_read(bsc *client)
             }
             vec->eom = vec->som = eom;
             if (!node->bytes_expected)
-                QUEUE_FIN_CMD(buf);
+                CBQ_DEQ_FIN(buf);
         }
     }
     vec->eom = vec->som = vec->data;
@@ -466,19 +429,19 @@ bsc_error_t bsc_put(bsc            *client,
     if ( ( error = ENQ_CMD_(client, bsp_gen_put_hdr, 3, got_put_res, priority, delay, ttr, bytes) ) != BSC_ERROR_NONE )
         return error;
 
-    IOQ_PUT_NV( client->outq, (char *)data, bytes, false );
-    IOQ_PUT_NV( client->outq, (char *)CRLF, CONST_STRLEN(CRLF), false );
+    ioq_enq_( client->outq, (char *)data, bytes, false );
+    ioq_enq_( client->outq, (char *)CRLF, CONST_STRLEN(CRLF), false );
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.priority  = priority;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.ttr       = ttr;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.delay     = delay;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.bytes     = bytes;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.data      = data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->put_info.request.autofree  = free_when_finished;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.priority  = priority;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.ttr       = ttr;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.delay     = delay;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.bytes     = bytes;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.data      = data;
+    AQ_FRONT_(client->cbqueue)->cb_data->put_info.request.autofree  = free_when_finished;
 
-    QUEUE_FIN_PUT(client);
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -507,10 +470,10 @@ bsc_error_t bsc_use(bsc                *client,
     if ( ( error = ENQ_CMD(client, use, got_use_res, tube) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->use_info.request.tube = tube;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->use_info.user_data    = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->use_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->use_info.request.tube = tube;
+    AQ_FRONT_(client->cbqueue)->cb_data->use_info.user_data    = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->use_info.user_cb      = user_cb;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -547,10 +510,10 @@ bsc_error_t bsc_reserve(bsc                *client,
             return error;
     }
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->reserve_info.request.timeout   = timeout;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->reserve_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->reserve_info.user_cb           = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->reserve_info.request.timeout   = timeout;
+    AQ_FRONT_(client->cbqueue)->cb_data->reserve_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->reserve_info.user_cb           = user_cb;
+    CBQ_ENQ_FIN(client);
     return BSC_ERROR_NONE;
 }
 
@@ -565,7 +528,7 @@ static void got_reserve_res(bsc *client, cbq_node *node, const char *data, size_
     }
     else {
         reserve_info->response.code = bsp_get_reserve_res(data, &(reserve_info->response.id), &(reserve_info->response.bytes));
-        if (reserve_info->response.code == BSP_RESERVE_RES_RESERVED)
+        if (reserve_info->response.code == BSC_RESERVE_RES_RESERVED)
             node->bytes_expected = reserve_info->response.bytes;
         else {
             if (reserve_info->user_cb != NULL)
@@ -584,10 +547,10 @@ bsc_error_t bsc_delete(bsc                *client,
     if ( ( error = ENQ_CMD(client, delete, got_delete_res, id) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->delete_info.request.id   = id;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->delete_info.user_data    = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->delete_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->delete_info.request.id   = id;
+    AQ_FRONT_(client->cbqueue)->cb_data->delete_info.user_data    = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->delete_info.user_cb      = user_cb;
+    CBQ_ENQ_FIN(client);
     return BSC_ERROR_NONE;
 }
 
@@ -603,12 +566,12 @@ bsc_error_t bsc_release(bsc                 *client,
     if ( ( error = ENQ_CMD(client, release, got_release_res, id, priority, delay) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->release_info.request.id         = id;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->release_info.request.priority   = priority;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->release_info.request.delay      = delay;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->release_info.user_data          = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->release_info.user_cb            = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->release_info.request.id         = id;
+    AQ_FRONT_(client->cbqueue)->cb_data->release_info.request.priority   = priority;
+    AQ_FRONT_(client->cbqueue)->cb_data->release_info.request.delay      = delay;
+    AQ_FRONT_(client->cbqueue)->cb_data->release_info.user_data          = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->release_info.user_cb            = user_cb;
+    CBQ_ENQ_FIN(client);
     return BSC_ERROR_NONE;
 }
 
@@ -623,11 +586,11 @@ bsc_error_t bsc_bury(bsc                *client,
     if ( ( error = ENQ_CMD(client, bury, got_bury_res, id, priority) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->bury_info.request.id         = id;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->bury_info.request.priority   = priority;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->bury_info.user_data          = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->bury_info.user_cb            = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->bury_info.request.id         = id;
+    AQ_FRONT_(client->cbqueue)->cb_data->bury_info.request.priority   = priority;
+    AQ_FRONT_(client->cbqueue)->cb_data->bury_info.user_data          = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->bury_info.user_cb            = user_cb;
+    CBQ_ENQ_FIN(client);
     return BSC_ERROR_NONE;
 }
 
@@ -641,10 +604,10 @@ bsc_error_t bsc_touch(bsc                *client,
     if ( ( error = ENQ_CMD(client, touch, got_touch_res, id) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->touch_info.request.id   = id;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->touch_info.user_data    = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->touch_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->touch_info.request.id   = id;
+    AQ_FRONT_(client->cbqueue)->cb_data->touch_info.user_data    = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->touch_info.user_cb      = user_cb;
+    CBQ_ENQ_FIN(client);
     return BSC_ERROR_NONE;
 }
 
@@ -658,10 +621,10 @@ bsc_error_t bsc_watch(bsc                *client,
     if ( ( error = ENQ_CMD(client, watch, got_watch_res, tube) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->watch_info.request.tube = tube;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->watch_info.user_data    = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->watch_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->watch_info.request.tube = tube;
+    AQ_FRONT_(client->cbqueue)->cb_data->watch_info.user_data    = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->watch_info.user_cb      = user_cb;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -732,10 +695,10 @@ bsc_error_t bsc_ignore(bsc                *client,
     if ( ( error = ENQ_CMD(client, ignore, got_ignore_res, tube) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->ignore_info.request.tube = tube;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->ignore_info.user_data    = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->ignore_info.user_cb      = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->ignore_info.request.tube = tube;
+    AQ_FRONT_(client->cbqueue)->cb_data->ignore_info.user_data    = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->ignore_info.user_cb      = user_cb;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -748,7 +711,7 @@ static void got_ignore_res(bsc *client, cbq_node *node, const char *data, size_t
 
     ignore_info->response.code = bsp_get_ignore_res(data, &(ignore_info->response.count));
 
-    if (ignore_info->response.code == BSP_RES_WATCHING) {
+    if (ignore_info->response.code == BSC_RES_WATCHING) {
         while (true) {
             if ( ( cmp_res = strcmp(p->name, ignore_info->request.tube) ) == 0 ) {
                 if (prev != NULL)
@@ -798,11 +761,11 @@ bsc_error_t bsc_peek(bsc                *client,
             if ( ( error = ENQ_CMD(client, peek_buried, got_peek_res) ) != BSC_ERROR_NONE )
                 return error;
     }
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.request.peek_type = peek_type;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->peek_info.request.id        = id;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->peek_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->peek_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->peek_info.request.peek_type = peek_type;
+    AQ_FRONT_(client->cbqueue)->cb_data->peek_info.request.id        = id;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -818,7 +781,7 @@ static void got_peek_res(bsc *client, cbq_node *node, const char *data, size_t l
     }
     else {
         peek_info->response.code = bsp_get_peek_res(data, &(peek_info->response.id), &(peek_info->response.bytes));
-        if (peek_info->response.code == BSP_PEEK_RES_FOUND)
+        if (peek_info->response.code == BSC_PEEK_RES_FOUND)
             node->bytes_expected = peek_info->response.bytes;
         else {
             if (peek_info->user_cb != NULL)
@@ -837,10 +800,10 @@ bsc_error_t bsc_kick(bsc                *client,
     if ( ( error = ENQ_CMD(client, kick, got_kick_res, bound) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->kick_info.request.bound     = bound;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->kick_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->kick_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->kick_info.request.bound     = bound;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -866,29 +829,29 @@ bsc_error_t bsc_pause_tube(bsc                    *client,
     if ( ( error = ENQ_CMD(client, pause_tube, got_pause_tube_res, tube, delay) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.request.tube      = tube;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->pause_tube_info.request.delay     = delay;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->pause_tube_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->pause_tube_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->pause_tube_info.request.tube      = tube;
+    AQ_FRONT_(client->cbqueue)->cb_data->pause_tube_info.request.delay     = delay;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
 
-bsc_error_t bsc_stats_job(bsc                     *client,
-                          bsc_stats_job_user_cb    user_cb,
-                          void                    *user_data,
-                          uint64_t                 id)
+bsc_error_t bsc_get_stats_job(bsc                     *client,
+                              bsc_stats_job_user_cb    user_cb,
+                              void                    *user_data,
+                              uint64_t                 id)
 {
     bsc_error_t error;
 
     if ( ( error = ENQ_CMD(client, stats_job, got_stats_job_res, id) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_job_info.request.id        = id;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_job_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_job_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_job_info.request.id        = id;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -905,7 +868,7 @@ static void got_stats_job_res(bsc *client, cbq_node *node, const char *data, siz
     }
     else {
         stats_job_info->response.code = bsp_get_stats_job_res(data, &(stats_job_info->response.bytes));
-        if (stats_job_info->response.code == BSP_RES_OK)
+        if (stats_job_info->response.code == BSC_RES_OK)
             node->bytes_expected = stats_job_info->response.bytes;
         else {
             if (stats_job_info->user_cb != NULL)
@@ -914,20 +877,20 @@ static void got_stats_job_res(bsc *client, cbq_node *node, const char *data, siz
     }
 }
 
-bsc_error_t bsc_stats_tube(bsc                     *client,
-                          bsc_stats_tube_user_cb    user_cb,
-                          void                     *user_data,
-                          const char               *tube)
+bsc_error_t bsc_get_stats_tube(bsc                     *client,
+                               bsc_stats_tube_user_cb    user_cb,
+                               void                     *user_data,
+                               const char               *tube)
 {
     bsc_error_t error;
 
     if ( ( error = ENQ_CMD(client, stats_tube, got_stats_tube_res, tube) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.user_cb           = user_cb;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->stats_tube_info.request.tube      = tube;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_tube_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_tube_info.user_cb           = user_cb;
+    AQ_FRONT_(client->cbqueue)->cb_data->stats_tube_info.request.tube      = tube;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -944,7 +907,7 @@ static void got_stats_tube_res(bsc *client, cbq_node *node, const char *data, si
     }
     else {
         stats_tube_info->response.code = bsp_get_stats_tube_res(data, &(stats_tube_info->response.bytes));
-        if (stats_tube_info->response.code == BSP_RES_OK)
+        if (stats_tube_info->response.code == BSC_RES_OK)
             node->bytes_expected = stats_tube_info->response.bytes;
         else {
             if (stats_tube_info->user_cb != NULL)
@@ -953,18 +916,18 @@ static void got_stats_tube_res(bsc *client, cbq_node *node, const char *data, si
     }
 }
 
-bsc_error_t bsc_server_stats(bsc                      *client,
-                             bsc_server_stats_user_cb  user_cb,
-                             void                     *user_data)
+bsc_error_t bsc_get_server_stats(bsc                      *client,
+                                 bsc_server_stats_user_cb  user_cb,
+                                 void                     *user_data)
 {
     bsc_error_t error;
 
     if ( ( error = ENQ_CMD(client, stats, got_server_stats_res) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->server_stats_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->server_stats_info.user_cb           = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->server_stats_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->server_stats_info.user_cb           = user_cb;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -981,7 +944,7 @@ static void got_server_stats_res(bsc *client, cbq_node *node, const char *data, 
     }
     else {
         server_stats_info->response.code = bsp_get_stats_res(data, &(server_stats_info->response.bytes));
-        if (server_stats_info->response.code == BSP_RES_OK)
+        if (server_stats_info->response.code == BSC_RES_OK)
             node->bytes_expected = server_stats_info->response.bytes;
         else {
             if (server_stats_info->user_cb != NULL)
@@ -999,9 +962,9 @@ bsc_error_t bsc_list_tubes(bsc                      *client,
     if ( ( error = ENQ_CMD(client, list_tubes, got_list_tubes_res) ) != BSC_ERROR_NONE )
         return error;
 
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->list_tubes_info.user_data         = user_data;
-    AQUEUE_FRONT_NV(client->cbqueue)->cb_data->list_tubes_info.user_cb           = user_cb;
-    QUEUE_FIN_PUT(client);
+    AQ_FRONT_(client->cbqueue)->cb_data->list_tubes_info.user_data         = user_data;
+    AQ_FRONT_(client->cbqueue)->cb_data->list_tubes_info.user_cb           = user_cb;
+    CBQ_ENQ_FIN(client);
 
     return BSC_ERROR_NONE;
 }
@@ -1018,7 +981,7 @@ static void got_list_tubes_res(bsc *client, cbq_node *node, const char *data, si
     }
     else {
         list_tubes_info->response.code = bsp_get_list_tubes_res(data, &(list_tubes_info->response.bytes));
-        if (list_tubes_info->response.code == BSP_RES_OK)
+        if (list_tubes_info->response.code == BSC_RES_OK)
             node->bytes_expected = list_tubes_info->response.bytes;
         else {
             if (list_tubes_info->user_cb != NULL)
