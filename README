@@ -7,7 +7,6 @@ Dependencies:
 
 arrayqueue.h: http://github.com/bergundy/arrayqueue
 ioqueue library: http://github.com/bergundy/IOQueue
-libbeanstalkproto (The protocol implementation): http://github.com/bergundy/libbeanstalkproto
 sockutils (a simple socket library i wrote to avoid rewriting socket code): http://github.com/bergundy/sockutils
 
 To enable tests you will need check (http://check.sourceforge.net/)
