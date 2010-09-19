@@ -299,7 +299,6 @@ void bsc_write(bsc *client)
     size_t  i;
     ssize_t nodes_written;
     if (client->tubeq != NULL) {
-        printf("[%X] ]in write cb, tubeq != NULL\n", client);
         nodes_written = ioq_dump(client->tubeq, client->fd);
         if (AQ_EMPTY(client->tubeq)) {
             ioq_free(client->tubeq);

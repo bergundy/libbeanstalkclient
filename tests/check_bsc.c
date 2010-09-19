@@ -53,6 +53,30 @@ static char spawn_cmd[200];
 static char kill_cmd[200];
 static bsc_error_t bsc_error;
 
+int client_poll(bsc *client, fd_set *readset, fd_set *writeset)
+{
+    FD_SET(client->fd, readset);
+    FD_SET(client->fd, writeset);
+    if (AQ_EMPTY(client->outq)) {
+        if ( select(client->fd+1, readset, NULL, NULL, NULL) < 0) {
+            fprintf(stderr, "critical error: select()");
+            return EXIT_FAILURE;
+        }
+        if (FD_ISSET(client->fd, readset))
+            bsc_read(client);
+    }
+    else {
+        if ( select(client->fd+1, readset, writeset, NULL, NULL) < 0) {
+            fprintf(stderr, "critical error: select()");
+            return EXIT_FAILURE;
+        }
+        if (FD_ISSET(client->fd, readset))
+            bsc_read(client);
+        if (FD_ISSET(client->fd, writeset))
+            bsc_write(client);
+    }
+}
+
 /* generic error handler - fail on error */
 void onerror(bsc *client, bsc_error_t error)
 {
@@ -170,29 +194,8 @@ START_TEST(small_vec_test) {
     FD_ZERO(&writeset);
 
     while (!finished) {
-        FD_SET(client->fd, &readset);
-        FD_SET(client->fd, &writeset);
-        if (AQ_EMPTY(client->outq)) {
-            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-        }
-        else {
-            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-            if (FD_ISSET(client->fd, &writeset)) {
-                bsc_write(client);
-            }
-        }
+        if (client_poll(client, &readset, &writeset) == EXIT_FAILURE)
+            return EXIT_FAILURE;
     }
 
     bsc_free(client);
@@ -233,33 +236,10 @@ START_TEST(commands_test) {
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
-    FD_SET(client->fd, &readset);
-    FD_SET(client->fd, &writeset);
 
     while (!finished) {
-        FD_SET(client->fd, &readset);
-        FD_SET(client->fd, &writeset);
-        if (AQ_EMPTY(client->outq)) {
-            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-        }
-        else {
-            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-            if (FD_ISSET(client->fd, &writeset)) {
-                bsc_write(client);
-            }
-        }
+        if (client_poll(client, &readset, &writeset) == EXIT_FAILURE)
+            return EXIT_FAILURE;
     }
 
     bsc_free(client);
@@ -270,6 +250,40 @@ END_TEST
 /*****************************************************************************************************************/ 
 /*                                                      test 3                                                   */
 /*****************************************************************************************************************/ 
+static bool put_finished = false;
+
+void put_client_put_cb(bsc *client, struct bsc_put_info *info)
+{
+    put_finished = true;
+}
+
+void spawn_put_client()
+{
+    char errorstr[BSC_ERRSTR_LEN];
+    fd_set readset, writeset;
+
+    bsc *put_client;
+    put_client = bsc_new(host, reconnect_test_port, "baba", NULL, 16, 12, 4, errorstr);
+    if(!put_client) {
+        fprintf(stderr, "bsc_new: %s", errorstr);
+        exit(EXIT_FAILURE);
+    }
+
+    bsc_error = bsc_put(put_client, put_client_put_cb, NULL, 1, 0, 10, strlen("baba"), "baba", false);
+
+    if (bsc_error != BSC_ERROR_NONE) {
+        fprintf(stderr, "bsc_put failed (%d)", bsc_error );
+        exit(EXIT_FAILURE);
+    }
+
+    FD_ZERO(&readset);
+    FD_ZERO(&writeset);
+
+    while (!put_finished)
+        client_poll(put_client, &readset, &writeset);
+    printf("put_client: put finished\n");
+}
+
 
 void reconnect_test_ignore_cb(bsc *client, struct bsc_ignore_info *info)
 {
@@ -285,9 +299,7 @@ static void reconnect(bsc *client, bsc_error_t error)
 {
     char errorstr[BSC_ERRSTR_LEN];
     system(spawn_cmd);
-    char put_cmd[200], put_format[] = "sleep 1 && echo \"use baba\\r\\nput 1 2 3 4\\r\\nbaba\\r\\nquit\\r\\n\"|nc localhost %d";
-    sprintf(put_cmd, put_cmd, reconnect_test_port);
-    system(put_cmd);
+    spawn_put_client();
 
     if (error == BSC_ERROR_INTERNAL) {
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
@@ -297,12 +309,12 @@ static void reconnect(bsc *client, bsc_error_t error)
             fail_if( client->outq->used != 9, 
                 "after reconnect: nodes_used : %d/%d", client->outq->used, 9);
 
-            printf("[%X] reconnect successful\n", client);
+            printf("reconnect successful\n", client);
 
             return;
         }
+        fail("critical error: maxed out reconnect attempts, quitting\n");
     }
-    fail("critical error: maxed out reconnect attempts, quitting\n");
 }
 
 START_TEST(reconnect_test) {
@@ -310,7 +322,7 @@ START_TEST(reconnect_test) {
     fd_set readset, writeset;
     char errorstr[BSC_ERRSTR_LEN];
     sprintf(spawn_cmd, "beanstalkd -p %s -d", reconnect_test_port);
-    sprintf(kill_cmd, "ps -ef|grep beanstalkd |grep '%s'| gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
+    sprintf(kill_cmd, "ps -ef|grep beanstalkd|grep '%s'|gawk '!/grep/ {print $2}'|xargs kill", reconnect_test_port);
     system(spawn_cmd);
     client = bsc_new( host, reconnect_test_port, "baba", reconnect, 16, 12, 4, errorstr);
     fail_if( client == NULL, "bsc_new: %s", errorstr);
@@ -322,7 +334,7 @@ START_TEST(reconnect_test) {
 
     bsc_error = bsc_ignore(client, reconnect_test_ignore_cb, NULL, "default");
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_ignore failed (%d)", bsc_error );
-    bsc_error = bsc_reserve(client, NULL, NULL, BSC_RESERVE_NO_TIMEOUT);
+    bsc_error = bsc_reserve(client, reconnect_test_reserve_cb, NULL, BSC_RESERVE_NO_TIMEOUT);
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
     bsc_error = bsc_reserve(client, NULL, NULL, BSC_RESERVE_NO_TIMEOUT);
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_reserve failed (%d)", bsc_error);
@@ -334,29 +346,8 @@ START_TEST(reconnect_test) {
     fail_if(bsc_error, "bsc_put failed (%d)", bsc_error);
 
     while (!finished) {
-        FD_SET(client->fd, &readset);
-        FD_SET(client->fd, &writeset);
-        if (AQ_EMPTY(client->outq)) {
-            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-        }
-        else {
-            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-            if (FD_ISSET(client->fd, &writeset)) {
-                bsc_write(client);
-            }
-        }
+        if (client_poll(client, &readset, &writeset) == EXIT_FAILURE)
+            return EXIT_FAILURE;
     }
 
     system(kill_cmd);
@@ -477,8 +468,6 @@ START_TEST(tube_test) {
 
     FD_ZERO(&readset);
     FD_ZERO(&writeset);
-    FD_SET(client->fd, &readset);
-    FD_SET(client->fd, &writeset);
 
     bsc_error = bsc_watch(client, tube_test_watch_cb, NULL, "baba2");
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
@@ -487,29 +476,8 @@ START_TEST(tube_test) {
     fail_if(bsc_error != BSC_ERROR_NONE, "bsc_watch failed (%d)", bsc_error );
 
     while (!finished) {
-        FD_SET(client->fd, &readset);
-        FD_SET(client->fd, &writeset);
-        if (AQ_EMPTY(client->outq)) {
-            if ( select(client->fd+1, &readset, NULL, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-        }
-        else {
-            if ( select(client->fd+1, &readset, &writeset, NULL, NULL) < 0) {
-                fail("select()");
-                return;
-            }
-            if (FD_ISSET(client->fd, &readset)) {
-                bsc_read(client);
-            }
-            if (FD_ISSET(client->fd, &writeset)) {
-                bsc_write(client);
-            }
-        }
+        if (client_poll(client, &readset, &writeset) == EXIT_FAILURE)
+            return EXIT_FAILURE;
     }
 
     bsc_free(client);

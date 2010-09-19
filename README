@@ -3,12 +3,6 @@ libbeanstalkclient.
 This is a non blocking implementation of a beanstalk client.
 It is ment to be embedded in event loops like libevent/libev.
 
-Dependencies:
-
-arrayqueue.h: http://github.com/bergundy/arrayqueue
-ioqueue library: http://github.com/bergundy/IOQueue
-sockutils (a simple socket library i wrote to avoid rewriting socket code): http://github.com/bergundy/sockutils
-
 To enable tests you will need check (http://check.sourceforge.net/)
 
 TODO:
