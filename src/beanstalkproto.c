@@ -49,8 +49,8 @@
 #define  CSTRLEN(cstr) (sizeof(cstr)/sizeof(char)-1)
 #define  MACRO2STR_(m) #m
 #define  MACRO2STR(m) MACRO2STR_(m)
-#define  UINT32_STRL ( (sizeof( MACRO2STR(UINT32_MAX))/sizeof(char)) - 1 )
-#define  UINT64_STRL ( (sizeof( MACRO2STR(UINT64_MAX))/sizeof(char)) - 1 )
+#define  UINT32_STRL ( CSTRLEN(MACRO2STR(UINT32_MAX)) )
+#define  UINT64_STRL ( CSTRLEN(MACRO2STR(UINT64_MAX)) )
 
 
 static const char *bsp_response_str[] = {
@@ -106,18 +106,18 @@ static const size_t bsp_response_strlen[] = {
     CSTRLEN("PAUSED")
 };
 
-#define GEN_STATIC_CMD(cmd_name, str)                               \
-char *bsp_gen_ ## cmd_name ## _cmd(int *cmd_len, bool *is_allocated)  \
-{                                                                   \
-    static const char cmd[] = (str);                                \
-    *cmd_len = CSTRLEN(cmd);                                        \
-    *is_allocated = false;                                            \
-    return (char *)cmd;                                             \
+#define GEN_STATIC_CMD(cmd_name, str)                                \
+char *bsp_gen_ ## cmd_name ## _cmd(int *cmd_len, bool *is_allocated) \
+{                                                                    \
+    static const char cmd[] = (str);                                 \
+    *cmd_len = CSTRLEN(cmd);                                         \
+    *is_allocated = false;                                           \
+    return (char *)cmd;                                              \
 }
 
 #define INIT_CMD_MALLOC(...)                                            \
     char *cmd   = NULL;                                                 \
-    *is_allocated = true;                                                 \
+    *is_allocated = true;                                               \
     if ( ( cmd = (char *)malloc( sizeof(char) * alloc_len ) ) == NULL ) \
         return NULL;                                                    \
     if ( ( *cmd_len = sprintf(cmd, format, ##__VA_ARGS__ ) ) < 0 ) {    \
@@ -149,7 +149,7 @@ static const bsc_response_t bsp_general_error_responses[] = {
 
 #define bsp_get_response_t( response, possibilities )                                \
     register unsigned int i;                                                         \
-    response_t = BSC_RES_UNRECOGNIZED;                                          \
+    response_t = BSC_RES_UNRECOGNIZED;                                               \
     for (i = 0; i < sizeof(possibilities)/sizeof(bsc_response_t); ++i)               \
         if ( ( strncmp(response, bsp_response_str[possibilities[i]],                 \
                 bsp_response_strlen[possibilities[i]]) ) == 0 )                      \

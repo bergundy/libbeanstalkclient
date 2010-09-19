@@ -221,7 +221,6 @@ bool bsc_connect(bsc *client, char *errorstr)
         bsc_disconnect(client);
         return false;
     }
-        
 
     if ( ( queue_diff = client->outq_offset + (client->cbqueue->used - client->outq->used ) ) > 0 ) {
         client->outq->rear -= queue_diff;
@@ -300,6 +299,7 @@ void bsc_write(bsc *client)
     size_t  i;
     ssize_t nodes_written;
     if (client->tubeq != NULL) {
+        printf("[%X] ]in write cb, tubeq != NULL\n", client);
         nodes_written = ioq_dump(client->tubeq, client->fd);
         if (AQ_EMPTY(client->tubeq)) {
             ioq_free(client->tubeq);

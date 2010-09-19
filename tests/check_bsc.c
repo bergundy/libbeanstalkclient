@@ -276,10 +276,18 @@ void reconnect_test_ignore_cb(bsc *client, struct bsc_ignore_info *info)
     system(kill_cmd);
 }
 
+void reconnect_test_reserve_cb(bsc *client, struct bsc_reserve_info *info)
+{
+    finished++;
+}
+
 static void reconnect(bsc *client, bsc_error_t error)
 {
     char errorstr[BSC_ERRSTR_LEN];
     system(spawn_cmd);
+    char put_cmd[200], put_format[] = "sleep 1 && echo \"use baba\\r\\nput 1 2 3 4\\r\\nbaba\\r\\nquit\\r\\n\"|nc localhost %d";
+    sprintf(put_cmd, put_cmd, reconnect_test_port);
+    system(put_cmd);
 
     if (error == BSC_ERROR_INTERNAL) {
         fail("critical error: recieved BSC_ERROR_INTERNAL, quitting\n");
@@ -289,7 +297,8 @@ static void reconnect(bsc *client, bsc_error_t error)
             fail_if( client->outq->used != 9, 
                 "after reconnect: nodes_used : %d/%d", client->outq->used, 9);
 
-            finished++;
+            printf("[%X] reconnect successful\n", client);
+
             return;
         }
     }
@@ -446,8 +455,6 @@ static void tt_reconnect(bsc *client, bsc_error_t error)
             fail_if( strcmp(AQ_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n"),
                 "after reconnect: AQ_REAR(client->tubeq) iov_base (%s) != (%s)",
                 AQ_REAR(client->tubeq)->vec->iov_base, "ignore default\r\n");
-
-            printf("reconnect successful\n");
 
             finished++;
             return;

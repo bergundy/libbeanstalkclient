@@ -3,7 +3,7 @@
  * @file   ivector.h
  * @brief  header file for ivector
  * @date   07/05/2010 06:20:49 PM
- * @author Roey Berman, (royb@walla.net.il), Walla!
+ * @author Roey Berman, (roey.berman@gmail.com)
  * =====================================================================================
  */
 #ifndef IVECTOR_H
@@ -23,7 +23,7 @@ struct _ivector {
 typedef struct _ivector ivector;
 
 ivector *ivector_new(size_t init_size);
-void      ivector_free(ivector *vec);
-bool      ivector_expand(ivector *vec);
+void     ivector_free(ivector *vec);
+bool     ivector_expand(ivector *vec);
 
 #endif /* IVECTOR_H */
