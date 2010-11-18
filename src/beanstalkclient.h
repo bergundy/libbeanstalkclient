@@ -903,6 +903,8 @@ bsc_error_t bsc_get_list_tubes(bsc                    *client,
                                bsc_list_tubes_user_cb  user_cb,
                                void                   *user_data);
 
+void debug_show_queue(bsc *client);
+
 #ifdef __cplusplus
     }
 #endif

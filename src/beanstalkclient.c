@@ -41,6 +41,7 @@
 #endif
 
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <unistd.h>
@@ -81,6 +82,7 @@ static void got_ ## cmd_type ## _res(bsc *client, cbq_node *node, const char *da
 
 static bool insert_tube_before(const char *name, struct bsc_tube_list **l);
 static bool insert_tube_after(const char *name, struct bsc_tube_list *l);
+static void outq_shift(ioq *q, ptrdiff_t s);
 
 static void got_put_res(bsc *client, cbq_node *node, const char *data, size_t len);
 static void got_use_res(bsc *client, cbq_node *node, const char *data, size_t len);
@@ -222,23 +224,30 @@ bool bsc_connect(bsc *client, char *errorstr)
         return false;
     }
 
-    if ( ( queue_diff = client->outq_offset + (client->cbqueue->used - client->outq->used ) ) > 0 ) {
-        client->outq->rear -= queue_diff;
-        client->outq->used += queue_diff;
-        if (client->outq->rear < 0)
-            client->outq->rear += client->outq->size;
-    }
+    // caculate the shift between outq and cbqueue
+    queue_diff = client->outq_offset + (client->cbqueue->used - client->outq->used);
+    outq_shift(client->outq, -1 * queue_diff);
+
+    // reset the input vector (buffer)
     client->vec->som = client->vec->eom = client->vec->data;
 
     if (client->tubeq != NULL)
         ioq_free(client->tubeq);
+
+    // move the outgoing queue to a tmp queue
     tmpq = client->outq;
+
+    // create a new outgoing queue for watching, using and ignoring tubes
     if ( ( client->outq = ioq_new(client->watched_tubes_count + 2) ) == NULL )
         goto out_of_memory;
 
     if (client->tubecbq != NULL)
         cbq_free(client->tubecbq);
+
+    // move the outgoing callback queue to a tmp queue
     tmpcbq = client->cbqueue;
+    
+    // create a new outgoing callback queue for watching, using and ignoring tubes
     if ( ( client->cbqueue = cbq_new(client->watched_tubes_count + 2) ) == NULL )
         goto out_of_memory;
 
@@ -321,10 +330,13 @@ void bsc_write(bsc *client)
                 client->onerror(client, BSC_ERROR_SOCKET);
         }
     else
-        for (i = 0; nodes_written > 0; ++i) {
-            node = client->cbqueue->nodes + ((client->cbqueue->rear + i) % (client->cbqueue->size - 1));
-            client->outq_offset += node->outq_offset;
-            nodes_written -= node->outq_offset + 1;
+        for (i = 0; nodes_written-- > 0; ++i) {
+            node = client->cbqueue->nodes + ((client->cbqueue->rear + i) % client->cbqueue->size);
+            while (node->outq_offset > 0) {
+                --nodes_written;
+                --node->outq_offset;
+                ++client->outq_offset;
+            }
         }
 }
 
@@ -638,42 +650,22 @@ static void got_watch_res(bsc *client, cbq_node *node, const char *data, size_t 
     watch_info->response.code = bsp_get_watch_res(data, &(watch_info->response.count));
 
     while (!matched_tube) {
-        if ( ( cmp_res = strcmp(p->name, watch_info->request.tube) ) == 0 ) {
-#ifdef DEBUG
-            printf("cmp_res = 0: '%s' - '%s'\n", p->name, watch_info->request.tube);
-#endif
+        if ( ( cmp_res = strcmp(p->name, watch_info->request.tube) ) == 0 )
             matched_tube = true;
-        }
         else if (cmp_res > 0) {
             matched_tube = true;
             if (prev == NULL) {
-#ifdef DEBUG
-                printf("cmp_res > 0 (prev == NULL): '%s' - '%s'\n", p->name, watch_info->request.tube);
-#endif
                 if (!insert_tube_before(watch_info->request.tube, &client->watched_tubes))
                     client->onerror(client, BSC_ERROR_MEMORY);
             }
-            else {
-#ifdef DEBUG
-                printf("cmp_res > 0 (prev != NULL): '%s' - '%s'\n", p->name, watch_info->request.tube);
-#endif
-                if (!insert_tube_after(watch_info->request.tube, prev))
-                    client->onerror(client, BSC_ERROR_MEMORY);
-            }
+            else if (!insert_tube_after(watch_info->request.tube, prev))
+                client->onerror(client, BSC_ERROR_MEMORY);
         }
         else if (p->next == NULL) {
             matched_tube = true;
-#ifdef DEBUG
-            printf("cmp_res < 0: '%s' - '%s'\n", p->name, watch_info->request.tube);
-#endif
             if (!insert_tube_after(watch_info->request.tube, p))
                 client->onerror(client, BSC_ERROR_MEMORY);
         }
-#ifdef DEBUG
-        else {
-            printf("cmp_res < 0 (not inserted): '%s' - '%s'\n", p->name, watch_info->request.tube);
-        }
-#endif
         prev = p;
         p = p->next;
     }
@@ -1015,6 +1007,38 @@ static bool insert_tube_after(const char *name, struct bsc_tube_list *l)
         l->next     = newl;
         return true;
     }
+}
+
+static void outq_shift(ioq *q, ptrdiff_t s)
+{
+    q->rear += s;
+    q->used -= s;
+
+    if (q->rear < 0)
+        q->rear += q->size;
+    else if (q->rear > q->size)
+        q->rear %= q->size;
+}
+
+void debug_show_queue(bsc *client)
+{
+    int i, debug_str_pos = 0;
+    char debug_str[9000];
+    ioq_node *curr_node = NULL;
+
+    for (i = 0; i < client->outq->used; ++i) {
+        debug_str[debug_str_pos++] = '-';
+        debug_str[debug_str_pos++] = '>';
+        debug_str[debug_str_pos++] = ' ';
+        debug_str[debug_str_pos++] = '[';
+        curr_node = (client->outq->nodes + ( (client->outq->rear + i) % client->outq->size ));
+        strncpy(debug_str+debug_str_pos, curr_node->vec->iov_base, curr_node->vec->iov_len - 2);
+        debug_str_pos += curr_node->vec->iov_len - 2;
+        debug_str[debug_str_pos++] = ']';
+        debug_str[debug_str_pos++] = ' ';
+    }
+    debug_str[debug_str_pos] = '\0';
+    printf("%s\n", debug_str);
 }
 
 #ifdef __cplusplus
