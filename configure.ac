@@ -3,9 +3,9 @@ AC_INIT([libbeanstalkclient], [1.0], [roey.berman@gmail.com])
 AC_CONFIG_SRCDIR([src/beanstalkclient.h])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror])
+AM_PROG_AR
 
 AC_ARG_ENABLE(tests,[  --enable-tests          build tests],[ 
-	PKG_CHECK_MODULES([CHECK], [check >= 0.9.4]) 
 	build_tests=true
 ]
 )
